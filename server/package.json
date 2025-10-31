@@ -1,0 +1,29 @@
+{
+  "name": "app-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node --watch server.js",
+    "build:client": "cd ../client && npm run build",
+    "start": "node server.js",
+    "start:full": "npm run build:client && npm start",
+    "lint": "echo 'No linter configured for backend'"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "escpos": "^3.0.0-alpha.6",
+    "escpos-serialport": "^3.0.0-alpha.4",
+    "escpos-usb": "^3.0.0-alpha.4",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "mysql2": "^3.11.3",
+    "sequelize": "^6.37.3",
+    "serialport": "^13.0.0",
+    "zod": "^3.23.8"
+  }
+}

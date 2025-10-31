@@ -1,0 +1,332 @@
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+/* Optional: tweak base body colors when in dark */
+html[data-theme='dark'] body {
+  background-color: #0f172a;
+  color: #e5e7eb;
+}
+
+/* Lightweight dark theme overrides for common utility classes */
+html[data-theme='dark'] .bg-white {
+  background-color: #0b1220 !important;
+}
+html[data-theme='dark'] .bg-gray-50 {
+  background-color: #0f172a !important;
+}
+html[data-theme='dark'] .bg-gray-100,
+html[data-theme='dark'] .bg-slate-100,
+html[data-theme='dark'] .bg-slate-50 {
+  background-color: #101a2c !important;
+}
+html[data-theme='dark'] .text-gray-900, 
+html[data-theme='dark'] .text-gray-800 {
+  color: #e5e7eb !important;
+}
+html[data-theme='dark'] .text-gray-700, 
+html[data-theme='dark'] .text-gray-600, 
+html[data-theme='dark'] .text-gray-500 {
+  color: #cbd5e1 !important;
+}
+html[data-theme='dark'] .border-gray-200 {
+  border-color: #233044 !important;
+}
+html[data-theme='dark'] .border-gray-300 {
+  border-color: #2b3b56 !important;
+}
+html[data-theme='dark'] .hover\:bg-gray-100:hover {
+  background-color: #132036 !important;
+}
+/* Subtle hover for suggestion lists in dark mode */
+html[data-theme='dark'] .hover\:bg-gray-50:hover {
+  background-color: #0f1b30 !important; /* slightly lighter than card bg */
+}
+/* Softer borders for suggestion items */
+html[data-theme='dark'] .border-gray-100 {
+  border-color: #2a3852 !important;
+}
+html[data-theme='dark'] .shadow-sm, 
+html[data-theme='dark'] .shadow, 
+html[data-theme='dark'] .shadow-lg {
+  --tw-shadow-color: 0 20px 60px rgba(0,0,0,0.45) !important;
+}
+
+/* Sidebar & cards */
+html[data-theme='dark'] .sidebar, 
+html[data-theme='dark'] .card, 
+html[data-theme='dark'] .rounded-xl,
+html[data-theme='dark'] .rounded-lg,
+html[data-theme='dark'] .rounded-md {
+  background-color: #0b1220 !important;
+}
+
+/* Billing page specific tweaks */
+html[data-theme='dark'] .billing-menu-card {
+  background: linear-gradient(180deg, rgba(14,23,42,0.85) 0%, rgba(17,24,39,0.85) 100%) !important;
+  border: 1px solid #233044 !important;
+}
+/* Ensure text in billing menu cards is readable in dark */
+html[data-theme='dark'] .billing-menu-card h2,
+html[data-theme='dark'] .billing-menu-card h3,
+html[data-theme='dark'] .billing-menu-card p,
+html[data-theme='dark'] .billing-menu-card .text-gray-900,
+html[data-theme='dark'] .billing-menu-card .text-gray-700,
+html[data-theme='dark'] .billing-menu-card .text-gray-600 {
+  color: #e5e7eb !important;
+}
+html[data-theme='dark'] .billing-menu-card .text-orange-600 { color: #fdba74 !important; }
+html[data-theme='dark'] .billing-menu-card .text-green-600 { color: #86efac !important; }
+
+/* Force darker gradients for card headers and buttons in dark mode */
+html[data-theme='dark'] .billing-menu-card .bg-gradient-to-r {
+  background: linear-gradient(90deg, #0e1628 0%, #0b1323 100%) !important;
+}
+html[data-theme='dark'] .billing-menu-card .bg-gradient-to-br {
+  background: linear-gradient(135deg, #132036 0%, #0b1323 100%) !important;
+}
+html[data-theme='dark'] .billing-menu-card .border-orange-200,
+html[data-theme='dark'] .billing-menu-card .border-green-200,
+html[data-theme='dark'] .billing-menu-card .border-gray-200 {
+  border-color: #233044 !important;
+}
+html[data-theme='dark'] .billing-menu-card .hover\:border-green-300:hover,
+html[data-theme='dark'] .billing-menu-card .hover\:border-orange-300:hover {
+  border-color: #2b3b56 !important;
+}
+html[data-theme='dark'] .billing-menu-card .price-badge {
+  background-color: rgba(59,130,246,0.15) !important;
+  color: #93c5fd !important;
+}
+/* Ensure menu button gradients keep orange/green tint in dark */
+html[data-theme='dark'] .billing-menu-card button.bg-gradient-to-br.from-orange-50 {
+  background: linear-gradient(135deg, rgba(251,146,60,0.15) 0%, rgba(253,186,116,0.12) 100%) !important;
+}
+html[data-theme='dark'] .billing-menu-card button.bg-gradient-to-br.from-orange-50:hover {
+  background: linear-gradient(135deg, rgba(251,146,60,0.22) 0%, rgba(253,186,116,0.18) 100%) !important;
+}
+html[data-theme='dark'] .billing-menu-card button.bg-gradient-to-br.from-green-50 {
+  background: linear-gradient(135deg, rgba(34,197,94,0.15) 0%, rgba(134,239,172,0.12) 100%) !important;
+}
+html[data-theme='dark'] .billing-menu-card button.bg-gradient-to-br.from-green-50:hover {
+  background: linear-gradient(135deg, rgba(34,197,94,0.22) 0%, rgba(134,239,172,0.18) 100%) !important;
+}
+/* Icons/text visibility on buttons */
+html[data-theme='dark'] .billing-menu-card .text-orange-600 { color: #fdba74 !important; }
+html[data-theme='dark'] .billing-menu-card .text-green-600 { color: #86efac !important; }
+html[data-theme='dark'] .billing-menu-card .bg-orange-500 { background-color: #f97316 !important; }
+html[data-theme='dark'] .billing-menu-card .bg-green-500 { background-color: #22c55e !important; }
+html[data-theme='dark'] .billing-order-summary {
+  background-color: #0b1220 !important;
+  border-color: #233044 !important;
+}
+html[data-theme='dark'] .billing-order-summary h2,
+html[data-theme='dark'] .billing-order-summary .section-title {
+  color: #e5e7eb !important;
+}
+html[data-theme='dark'] .billing-order-summary .bg-gradient-to-r {
+  background: linear-gradient(90deg, #0e1628 0%, #0b1323 100%) !important;
+}
+/* Ensure Print Bill button keeps blue gradient in dark mode */
+html[data-theme='dark'] .billing-order-summary button.bg-gradient-to-r.from-blue-600.to-blue-700 {
+  background: linear-gradient(90deg, #2563eb 0%, #1d4ed8 100%) !important;
+  color: #eef2ff !important;
+}
+html[data-theme='dark'] .billing-order-summary button.bg-gradient-to-r.from-blue-600.to-blue-700:hover {
+  background: linear-gradient(90deg, #1e40af 0%, #1e3a8a 100%) !important;
+}
+html[data-theme='dark'] .billing-order-summary input {
+  background-color: #0f172a !important;
+  color: #e5e7eb !important;
+  border-color: #233044 !important;
+}
+html[data-theme='dark'] .billing-order-summary .text-gray-900 { color: #e5e7eb !important; }
+html[data-theme='dark'] .billing-order-summary .text-gray-700,
+html[data-theme='dark'] .billing-order-summary .text-gray-600,
+html[data-theme='dark'] .billing-order-summary .text-gray-500 { color: #a0aec0 !important; }
+html[data-theme='dark'] .billing-order-summary .bg-blue-50 { background-color: rgba(59,130,246,0.12) !important; }
+html[data-theme='dark'] .billing-order-summary .border-blue-200 { border-color: rgba(59,130,246,0.35) !important; }
+html[data-theme='dark'] .billing-order-summary .bg-gray-50 { background-color: #0f172a !important; }
+html[data-theme='dark'] .billing-order-summary .border-gray-200 { border-color: #233044 !important; }
+
+/* Common light badges on menu items */
+html[data-theme='dark'] .bg-orange-50 { background-color: rgba(251, 146, 60, 0.08) !important; }
+html[data-theme='dark'] .bg-green-50 { background-color: rgba(34, 197, 94, 0.08) !important; }
+html[data-theme='dark'] .bg-emerald-50 { background-color: rgba(16, 185, 129, 0.08) !important; }
+html[data-theme='dark'] .bg-yellow-50 { background-color: rgba(250, 204, 21, 0.08) !important; }
+
+/* Primary buttons */
+html[data-theme='dark'] [class*="bg-blue-600"] {
+  background-color: #2563eb !important; /* blue-600 */
+  color: #eef2ff !important;
+}
+html[data-theme='dark'] [class*="bg-blue-600"]:hover {
+  background-color: #1e40af !important; /* blue-800 */
+}
+/* Ensure other accent buttons retain color in dark */
+html[data-theme='dark'] [class*="bg-purple-600"] {
+  background-color: #7c3aed !important; /* purple-600 */
+  color: #eef2ff !important;
+}
+html[data-theme='dark'] [class*="bg-purple-600"]:hover {
+  background-color: #5b21b6 !important; /* purple-800 */
+}
+html[data-theme='dark'] [class*="bg-green-600"] {
+  background-color: #16a34a !important; /* green-600 */
+  color: #f0fdf4 !important;
+}
+html[data-theme='dark'] [class*="bg-green-600"]:hover {
+  background-color: #166534 !important; /* green-800 */
+}
+/* Import Data button (orange) visible in dark mode */
+html[data-theme='dark'] [class*="bg-orange-600"] {
+  background-color: #ea580c !important; /* orange-600 */
+  color: #fff7ed !important;
+}
+html[data-theme='dark'] [class*="bg-orange-600"]:hover {
+  background-color: #c2410c !important; /* orange-700 */
+}
+/* Gray utility buttons (Clear/Reset) should remain visible in dark */
+html[data-theme='dark'] [class*="bg-gray-500"] {
+  background-color: #6b7280 !important; /* gray-500 */
+  color: #f9fafb !important;
+}
+html[data-theme='dark'] [class*="bg-gray-500"]:hover {
+  background-color: #4b5563 !important; /* gray-600 */
+}
+
+/* Segmented/tab buttons typically with bg-white */
+html[data-theme='dark'] [class*="bg-white"][class*="rounded-full"],
+html[data-theme='dark'] [class*="bg-white"][class*="rounded-lg"] {
+  background-color: #0b1220 !important;
+  border-color: #233044 !important;
+  color: #e5e7eb !important;
+}
+
+/* Order summary panel (often white card with border) */
+html[data-theme='dark'] [class*="order"] [class*="summary"],
+html[data-theme='dark'] [class*="Order"] [class*="Summary"] {
+  background-color: #0b1220 !important;
+  border-color: #233044 !important;
+}
+
+/* Search input inside order summary */
+html[data-theme='dark'] input[type="search"],
+html[data-theme='dark'] [class*="search"] input {
+  background-color: #0f172a !important;
+  border-color: #233044 !important;
+  color: #e5e7eb !important;
+}
+
+/* Inputs */
+html[data-theme='dark'] input, 
+html[data-theme='dark'] select, 
+html[data-theme='dark'] textarea {
+  background-color: #0f172a;
+  color: #e5e7eb;
+  border-color: #233044;
+}
+html[data-theme='dark'] input::placeholder, 
+html[data-theme='dark'] textarea::placeholder {
+  color: #94a3b8;
+}
+
+/* Tables */
+html[data-theme='dark'] table thead {
+  background-color: #0b1220 !important;
+}
+html[data-theme='dark'] table tbody tr:hover {
+  background-color: #132036 !important;
+}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Thermal receipt styles for print */
+/* Host stays display:none in screen, becomes fixed in print */
+#thermal-receipt-host { display: none; }
+@media print {
+  body * { visibility: hidden !important; }
+  #thermal-receipt-host { 
+    display: block !important; 
+    position: fixed !important; 
+    inset: 0 auto auto 0 !important; 
+    width: 70mm !important; 
+    padding: 1mm 1mm !important; 
+    background: #fff !important;
+    z-index: 2147483647 !important; 
+  }
+  #thermal-receipt-host * { visibility: visible !important; }
+  @page { size: 70mm auto; margin: 0; }
+}
+
+/* Core receipt visuals (also used by Electron HTML) */
+.thermal-root {
+  width: 70mm;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  color: #000;
+  background: #fff;
+}
+.thermal-receipt {
+  padding: 2px 3px;
+}
+.thermal-receipt .header {
+  text-align: center;
+}
+.thermal-receipt .kitchen-print {
+  font-size: 16px;
+  font-weight: bold;
+}
+.thermal-receipt .company-name {
+  font-size: 16px;
+  font-weight: bold;
+}
+.thermal-receipt .bill-number {
+  font-size: 16px;
+  font-weight: bold;
+}
+.thermal-receipt .customer-info {
+  font-size: 11px;
+}
+.thermal-receipt .date-time {
+  display: flex;
+  justify-content: space-between;
+}
+.thermal-receipt .items-section {
+  border-top: 1px dashed #000;
+  padding-top: 2px;
+}
+.thermal-receipt .items-header {
+  display: flex;
+  justify-content: space-between;
+  font-weight: bold;
+  font-size: 11px;
+  border-bottom: 1px dashed #000;
+  padding-bottom: 1px;
+}
+.thermal-receipt .item-name-header {
+  text-align: left;
+}
+.thermal-receipt .qty-header {
+  text-align: right;
+}
+.thermal-receipt .items-list {
+  font-size: 11px;
+}
+.thermal-receipt .item-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+}
+.thermal-receipt .item-name {
+  text-align: left;
+  font-weight: normal;
+}
+.thermal-receipt .item-qty {
+  text-align: right;
+  font-weight: normal;
+}
