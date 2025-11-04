@@ -152,6 +152,12 @@ export default function Reports() {
           const lunchItems = bill.items
             .filter((item) => item.name === "Lunch")
             .reduce((sum, item) => sum + item.quantity, 0);
+          const exceptionBreakfast = bill.items
+            .filter((item) => item.name === "Breakfast" && item.isException)
+            .reduce((sum, item) => sum + item.quantity, 0);
+          const exceptionLunch = bill.items
+            .filter((item) => item.name === "Lunch" && item.isException)
+            .reduce((sum, item) => sum + item.quantity, 0);
 
           const isGuest = bill.customerType === "guest";
           return {
@@ -163,6 +169,9 @@ export default function Reports() {
             time: bill.time,
             breakfast: breakfastItems,
             lunch: lunchItems,
+            exceptionBreakfast,
+            exceptionLunch,
+            hasException: exceptionBreakfast > 0 || exceptionLunch > 0,
             totalItems: bill.totalItems,
             amount: bill.totalAmount,
             isGuest,
@@ -181,6 +190,12 @@ export default function Reports() {
           const lunchItems = bill.items
             .filter((item) => item.name === "Lunch")
             .reduce((sum, item) => sum + item.quantity, 0);
+          const exceptionBreakfast = bill.items
+            .filter((item) => item.name === "Breakfast" && item.isException)
+            .reduce((sum, item) => sum + item.quantity, 0);
+          const exceptionLunch = bill.items
+            .filter((item) => item.name === "Lunch" && item.isException)
+            .reduce((sum, item) => sum + item.quantity, 0);
 
           return {
             id: bill.id,
@@ -192,6 +207,9 @@ export default function Reports() {
             time: bill.time,
             breakfast: breakfastItems,
             lunch: lunchItems,
+            exceptionBreakfast,
+            exceptionLunch,
+            hasException: exceptionBreakfast > 0 || exceptionLunch > 0,
             totalItems: bill.totalItems,
             amount: bill.totalAmount,
           };
@@ -345,6 +363,12 @@ export default function Reports() {
             const lunchItems = bill.items
               .filter((item) => item.name === "Lunch")
               .reduce((sum, item) => sum + item.quantity, 0);
+            const exceptionBreakfast = bill.items
+              .filter((item) => item.name === "Breakfast" && item.isException)
+              .reduce((sum, item) => sum + item.quantity, 0);
+            const exceptionLunch = bill.items
+              .filter((item) => item.name === "Lunch" && item.isException)
+              .reduce((sum, item) => sum + item.quantity, 0);
 
             const isGuest = bill.customerType === "guest";
             return {
@@ -356,6 +380,9 @@ export default function Reports() {
               time: bill.time,
               breakfast: breakfastItems,
               lunch: lunchItems,
+              exceptionBreakfast,
+              exceptionLunch,
+              hasException: exceptionBreakfast > 0 || exceptionLunch > 0,
               totalItems: bill.totalItems,
               amount: bill.totalAmount,
               isGuest,
@@ -374,6 +401,12 @@ export default function Reports() {
             const lunchItems = bill.items
               .filter((item) => item.name === "Lunch")
               .reduce((sum, item) => sum + item.quantity, 0);
+            const exceptionBreakfast = bill.items
+              .filter((item) => item.name === "Breakfast" && item.isException)
+              .reduce((sum, item) => sum + item.quantity, 0);
+            const exceptionLunch = bill.items
+              .filter((item) => item.name === "Lunch" && item.isException)
+              .reduce((sum, item) => sum + item.quantity, 0);
 
             return {
               id: bill.id,
@@ -385,6 +418,9 @@ export default function Reports() {
               time: bill.time,
               breakfast: breakfastItems,
               lunch: lunchItems,
+              exceptionBreakfast,
+              exceptionLunch,
+              hasException: exceptionBreakfast > 0 || exceptionLunch > 0,
               totalItems: bill.totalItems,
               amount: bill.totalAmount,
             };
@@ -602,12 +638,12 @@ export default function Reports() {
         headers,
         ...reportData.map((record) => [
           record.employeeId,
-          record.employeeName,
+          record.employeeName + (record.hasException ? ' (Obtained more)' : ''),
           record.company,
           record.date,
           record.time,
-          record.breakfast,
-          record.lunch,
+          `${record.breakfast}${record.exceptionBreakfast ? ` (${record.exceptionBreakfast} EXC)` : ''}`,
+          `${record.lunch}${record.exceptionLunch ? ` (${record.exceptionLunch} EXC)` : ''}`,
           record.totalItems,
           `₹${record.amount}`,
         ]),
@@ -617,12 +653,12 @@ export default function Reports() {
         headers,
         ...supportStaffReportData.map((record) => [
           record.staffId,
-          record.staffName,
+          record.staffName + (record.hasException ? ' (Obtained more)' : ''),
           record.company,
           record.date,
           record.time,
-          record.breakfast,
-          record.lunch,
+          `${record.breakfast}${record.exceptionBreakfast ? ` (${record.exceptionBreakfast} EXC)` : ''}`,
+          `${record.lunch}${record.exceptionLunch ? ` (${record.exceptionLunch} EXC)` : ''}`,
           record.totalItems,
           `₹${record.amount}`,
         ]),
@@ -940,7 +976,15 @@ export default function Reports() {
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {record.employeeName}
+                          <div className="flex items-center gap-2">
+                            <span>{record.employeeName}</span>
+                            {record.hasException && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+                                <i className="ri-error-warning-line mr-1"></i>
+                                Obtained more
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {record.company}
@@ -953,9 +997,15 @@ export default function Reports() {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {record.breakfast}
+                          {record.exceptionBreakfast ? (
+                            <span className="ml-2 text-xs text-orange-700">({record.exceptionBreakfast} EXC)</span>
+                          ) : null}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {record.lunch}
+                          {record.exceptionLunch ? (
+                            <span className="ml-2 text-xs text-orange-700">({record.exceptionLunch} EXC)</span>
+                          ) : null}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                           {record.totalItems}
@@ -1117,7 +1167,15 @@ export default function Reports() {
                           {record.staffId}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {record.staffName}
+                          <div className="flex items-center gap-2">
+                            <span>{record.staffName}</span>
+                            {record.hasException && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+                                <i className="ri-error-warning-line mr-1"></i>
+                                Obtained more
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {record.company}
@@ -1130,9 +1188,15 @@ export default function Reports() {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {record.breakfast}
+                          {record.exceptionBreakfast ? (
+                            <span className="ml-2 text-xs text-orange-700">({record.exceptionBreakfast} EXC)</span>
+                          ) : null}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {record.lunch}
+                          {record.exceptionLunch ? (
+                            <span className="ml-2 text-xs text-orange-700">({record.exceptionLunch} EXC)</span>
+                          ) : null}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                           {record.totalItems}

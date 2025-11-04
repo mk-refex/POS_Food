@@ -62,6 +62,11 @@ export async function createTransaction(req, res) {
     // proceed without warnings on error
   }
 
+  // If validation only requested, return warnings without creating
+  if (req.query && req.query.validateOnly === 'true') {
+    return res.status(200).json({ warnings });
+  }
+
   const trx = await Transaction.create({ ...payload, userId: user?.userId ?? null });
   return res.status(201).json({ ...trx.toJSON(), warnings });
 }

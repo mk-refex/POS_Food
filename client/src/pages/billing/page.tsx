@@ -36,6 +36,9 @@ export default function Billing() {
     employeeName: string;
     consumedToday: { breakfast: number; lunch: number };
   } | null>(null);
+  const [showSubmitExceptionModal, setShowSubmitExceptionModal] = useState(false);
+  const [serverWarningState, setServerWarningState] = useState<{ breakfastExceeded?: boolean; lunchExceeded?: boolean } | null>(null);
+  const [pendingSubmit, setPendingSubmit] = useState<{ payload: any; billingData: any } | null>(null);
   const [pendingItem, setPendingItem] = useState<(typeof menuItems)[0] | null>(
     null
   );
@@ -533,7 +536,7 @@ export default function Billing() {
     };
 
     try {
-      // Post to backend transactions
+      // Build payload
       const payload = {
         customerType: isGuest
           ? "guest"
@@ -565,6 +568,25 @@ export default function Billing() {
         totalItems: billingData.totalItems,
         totalAmount: billingData.totalAmount,
       };
+
+      // Server-side validation (skip for guests)
+      if (!isGuest && payload.customerId) {
+        const validateRes = await apiFetch(`/transactions?validateOnly=true`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        const warnings = validateRes?.warnings || {};
+        if (warnings.breakfastExceeded || warnings.lunchExceeded) {
+          setServerWarningState({
+            breakfastExceeded: !!warnings.breakfastExceeded,
+            lunchExceeded: !!warnings.lunchExceeded,
+          });
+          setPendingSubmit({ payload, billingData });
+          setShowSubmitExceptionModal(true);
+          return; // wait for user choice
+        }
+      }
+
       const response = await apiFetch("/transactions", {
         method: "POST",
         body: JSON.stringify(payload),
@@ -578,7 +600,7 @@ export default function Billing() {
       // Prepare receipt HTML and send to Electron for silent print, fallback to window.print
       const html = buildReceiptHtml(billingData);
       console.log("html", html);
-      await printReceipt(html);
+      await printReceipt(html, billingData);
     } catch (err: any) {
       alert(err.message || "Failed to save transaction");
       return;
@@ -596,84 +618,8 @@ export default function Billing() {
     setSupportStaffSearch("");
   };
 
-  const printReceipt = async (html: string) => {
-    // Show loading screen
-    const loadingDiv = document.createElement("div");
-    loadingDiv.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0, 0, 0, 0.8);
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      z-index: 9999;
-      color: white;
-      font-size: 18px;
-      font-family: Arial, sans-serif;
-    `;
-    loadingDiv.innerHTML = `
-      <div style="text-align: center;">
-        <div style="margin-bottom: 20px;">🖨️</div>
-        <div>Printing Receipt...</div>
-        <div style="font-size: 14px; margin-top: 10px; opacity: 0.8;">Please wait while we print your bill</div>
-      </div>
-    `;
-    document.body.appendChild(loadingDiv);
-
-    // Ensure loading screen is removed after maximum 3 seconds
-    const loadingTimeout = setTimeout(() => {
-      try {
-        if (document.body.contains(loadingDiv)) {
-          document.body.removeChild(loadingDiv);
-        }
-      } catch (e) {
-        // Loading div already removed
-      }
-    }, 3000);
-
-    try {
-      // Try Electron silent print first
-      const electronApi = (window as any)?.electron;
-      console.log("Electron API available:", !!electronApi);
-
-      if (electronApi && typeof electronApi.printBill === "function") {
-        console.log("Calling Electron printBill...");
-        // Add timeout to prevent hanging (max 5 seconds)
-        const printPromise = electronApi.printBill(html, {
-          silent: true,
-          printerName: "RP327 Printer",
-        });
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error("Print timeout after 5 seconds")),
-            5000
-          )
-        );
-
-        const result = await Promise.race([printPromise, timeoutPromise]);
-        console.log("Print result:", result);
-
-        if (result.success) {
-          // Remove loading screen immediately after successful print
-          clearTimeout(loadingTimeout);
-          document.body.removeChild(loadingDiv);
-          return;
-        } else {
-          throw new Error(result.error || "Print failed");
-        }
-      }
-    } catch (e) {
-      // Electron print failed, continue to browser fallback
-    }
-
-    // Fallback to browser print if Electron is not available
-    clearTimeout(loadingTimeout);
-    document.body.removeChild(loadingDiv);
-
-    // Create hidden iframe for printing
+  const printReceipt = async (html: any, _billingData: any) => {
+    // Create hidden iframe
     const iframe = document.createElement("iframe");
     iframe.style.position = "fixed";
     iframe.style.right = "0";
@@ -684,47 +630,105 @@ export default function Billing() {
     document.body.appendChild(iframe);
 
     const cleanup = () => {
-      try {
+      if (document.body.contains(iframe)) {
         document.body.removeChild(iframe);
-      } catch {}
+      }
     };
 
-    const doc = iframe.contentWindow?.document || iframe.contentDocument;
+    const doc = iframe.contentWindow?.document;
     if (!doc) {
       cleanup();
       alert("Unable to access print document");
       return;
     }
 
+    // Write receipt HTML
     doc.open();
-    doc.write(html); // Use the same HTML structure as Electron
+    doc.write(html);
     doc.close();
 
     const printAndCleanup = () => {
       try {
-        iframe.contentWindow?.focus();
-        // Prefer onafterprint to know when to cleanup
-        const cw = iframe.contentWindow as any;
-        const done = () => setTimeout(cleanup, 500);
-        if ("onafterprint" in cw) {
-          cw.onafterprint = done;
-        } else {
-          setTimeout(done, 800);
-        }
-        cw.print();
-      } catch (e) {
+        iframe.contentWindow.focus();
+
+        // ✅ Silent print when Chrome launched with --kiosk-printing
+        iframe.contentWindow.print();
+
+        // Wait briefly to ensure print is sent to printer before removing iframe
+        setTimeout(cleanup, 1000);
+      } catch (err) {
+        console.error("Print error:", err);
         cleanup();
       }
     };
 
-    // Ensure resources are loaded before printing
-    if (
-      (iframe.contentDocument || iframe.contentWindow?.document)?.readyState ===
-      "complete"
-    ) {
+    // Wait until iframe fully loads
+    if (iframe.contentDocument.readyState === "complete") {
       printAndCleanup();
     } else {
       iframe.onload = printAndCleanup;
+    }
+  };
+
+  const handleSubmitExceptionChoice = async (proceedWithException: boolean) => {
+    const state = pendingSubmit;
+    if (!state) {
+      setShowSubmitExceptionModal(false);
+      return;
+    }
+    if (!proceedWithException) {
+      // Cancel
+      setShowSubmitExceptionModal(false);
+      setServerWarningState(null);
+      setPendingSubmit(null);
+      return;
+    }
+
+    try {
+      // Apply exception flags to exceeded items
+      const warn = serverWarningState || {};
+      const convert = (items: any[]) =>
+        items.map((it: any) => {
+          const isBreakfast = it.name === "Breakfast";
+          const isLunch = it.name === "Lunch";
+          if ((isBreakfast && warn.breakfastExceeded) || (isLunch && warn.lunchExceeded)) {
+            return { ...it, isException: true };
+          }
+          return it;
+        });
+
+      const payload = { ...state.payload, items: convert(state.payload.items) };
+      const billingData = { ...state.billingData, items: convert(state.billingData.items) };
+
+      const response = await apiFetch("/transactions", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+
+      const transactionId = response?.id || response?.data?.id || Date.now().toString();
+      billingData.id = transactionId.toString();
+
+      const html = buildReceiptHtml(billingData);
+      await printReceipt(html, billingData);
+
+      // Clear modal state
+      setShowSubmitExceptionModal(false);
+      setServerWarningState(null);
+      setPendingSubmit(null);
+
+      // Clear form
+      setCart([]);
+      setSelectedEmployee("");
+      setSelectedEmployeeObj(null);
+      setSelectedGuest("");
+      setSelectedGuestObj(null);
+      setSelectedSupportStaff("");
+      setSelectedSupportStaffObj(null);
+      setEmployeeSearch("");
+      setSupportStaffSearch("");
+    } catch (err: any) {
+      setShowSubmitExceptionModal(false);
+      alert(err?.message || "Failed to save transaction");
     }
   };
 
@@ -734,6 +738,7 @@ export default function Billing() {
       : billing.isSupportStaff
         ? billing.customer?.name
         : billing.customer?.employeeName;
+
     const currentUser = localStorage.getItem("currentUser") || "admin";
     let currentUserName = "Admin";
     try {
@@ -742,64 +747,82 @@ export default function Billing() {
     } catch (e) {
       currentUserName = "Admin";
     }
+
     const billNumber = billing.id;
 
     return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Kitchen Print - Bill ${billNumber}</title>
-  <style>
-    @page { 
-      size: 80mm auto; 
-      margin: 0; 
-    }
-    body { 
-      font-family: monospace; 
-      margin: 0; 
-      padding: 0; 
-      font-size: 12px; 
-      line-height: 1.2;
-      color: black;
-      background: white;
-      width: 80mm;
-    }
-    pre {
-      margin: 0;
-      padding: 0;
-      font-family: monospace;
-      font-size: 12px;
-      line-height: 1.2;
-      white-space: pre-wrap;
-    }
-  </style>
-</head>
-<body>
-  <pre>
-    KITCHEN PRINT
-    Refex Group
-    ***Bill No. - ${billNumber}***
-    
-    Customer: ${customerName || ""}
-    Created by: - ${currentUserName}
-    DATE: ${billing.date.split("-").reverse().join("/")}
-    TIME: ${billing.time}
-    
-    ----------------------------------------
-    Item Name          QTY
-    ----------------------------------------
-${billing.items
-  .map((it: any) => {
-    const flag = it.isException ? " (EXC)" : "";
-    const itemName = `${it.name}${flag}`;
-    const spaces = " ".repeat(Math.max(1, 20 - itemName.length));
-    return `    ${itemName}${spaces}${it.quantity}`;
-  })
-  .join("\n")}
-    ----------------------------------------
-  </pre>
-</body>
-</html>`;
+  <html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Kitchen Print - Bill ${billNumber}</title>
+    <style>
+      @page {
+        size: 80mm auto;
+        margin: 0mm !important;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family: monospace;
+        width: 80mm;
+        margin: 0;
+        padding: 0;
+        font-size: 13px;
+        line-height: 1.3;
+        color: #000;
+        background: #fff;
+      }
+      .center {
+        font-size: 16px;
+        text-align: center;
+        font-weight: bold;
+      }
+      .section {
+        margin: 4px 0;
+      }
+      .line {
+        border-top: 1px dashed #000;
+        margin: 4px 0;
+      }
+      .item-row {
+        display: flex;
+        justify-content: space-between;
+        white-space: pre;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="center">KITCHEN PRINT</div>
+    <div class="center">Refex Group</div>
+    <div class="center">*** Bill No: ${billNumber} ***</div>
+  
+    <div class="section">
+      <b>Customer:</b> ${customerName || ""}
+      <br/><b>Created By:</b> ${currentUserName}
+      <div class="item-row">
+        <span><b>Date:</b> ${billing.date.split("-").reverse().join("/")}</span>
+        <span><b>Time:</b> ${billing.time}</span>
+      </div>
+    </div>
+  
+    <div class="line"></div>
+    <div class="item-row">
+      <span><b>Item</b></span>
+      <span><b>Qty</b></span>
+    </div>
+    <div class="line"></div>
+  
+    ${billing.items
+      .map((it: any) => {
+        const flag = it.isException ? " (EXC)" : "";
+        return `<div class="item-row"><span>${it.name}${flag}</span><span>${it.quantity}</span></div>`;
+      })
+      .join("")}
+  
+    <div class="line"></div>
+  </body>
+  </html>`;
   };
 
   const getSelectedPersonName = () => {
@@ -911,6 +934,64 @@ ${billing.items
                   >
                     <i className="ri-add-line mr-2"></i>
                     Add as Exception
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Submit Exception Modal */}
+        {showSubmitExceptionModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+              <div className="p-6 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xl font-semibold text-red-600 flex items-center">
+                    <i className="ri-alert-line mr-2"></i>
+                    Already obtained meal today
+                  </h2>
+                  <button
+                    onClick={() => handleSubmitExceptionChoice(false)}
+                    className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"
+                  >
+                    <i className="ri-close-line text-xl"></i>
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6">
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4 text-sm text-yellow-800">
+                  {serverWarningState?.breakfastExceeded && (
+                    <div className="flex items-center mb-1">
+                      <i className="ri-restaurant-line mr-2"></i>
+                      Breakfast already taken today.
+                    </div>
+                  )}
+                  {serverWarningState?.lunchExceeded && (
+                    <div className="flex items-center">
+                      <i className="ri-bowl-line mr-2"></i>
+                      Lunch already taken today.
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 text-sm text-blue-800">
+                  Proceed as an Exception to record an additional meal for today. Exception items will be marked in bill and reports.
+                </div>
+
+                <div className="flex space-x-3">
+                  <button
+                    onClick={() => handleSubmitExceptionChoice(false)}
+                    className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 cursor-pointer whitespace-nowrap font-medium transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => handleSubmitExceptionChoice(true)}
+                    className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 cursor-pointer whitespace-nowrap font-medium transition-colors"
+                  >
+                    Exception
                   </button>
                 </div>
               </div>

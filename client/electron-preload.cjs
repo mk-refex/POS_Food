@@ -1,18 +1,13 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge } = require("electron");
 
-console.log('Preload script loaded');
+console.log("Preload script loaded");
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
-contextBridge.exposeInMainWorld('electron', {
-  getPrinters: () => {
-    console.log('getPrinters called from renderer');
-    return ipcRenderer.invoke('get-printers');
-  },
-  printBill: (html, options) => {
-    console.log('printBill called from renderer');
-    return ipcRenderer.invoke('print-bill', html, options);
-  }
+// Print functionality now uses simple window.print() with kiosk-printing flag
+contextBridge.exposeInMainWorld("electron", {
+  // Electron API is kept minimal for backward compatibility
+  // Printing is now handled by window.print() with --kiosk-printing flag
 });
 
-console.log('Electron API exposed to window.electron');
+console.log("Electron API exposed to window.electron");

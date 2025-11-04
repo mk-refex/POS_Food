@@ -1,5 +1,5 @@
 export function getApiBaseUrl() {
-  const url = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3000/api';
+  const url = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000/api';
   return url.replace(/\/$/, '');
 }
 

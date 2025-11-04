@@ -15,6 +15,11 @@ export default function Layout({ children }: LayoutProps) {
     const saved = localStorage.getItem('app_theme');
     return saved === 'light' ? 'light' : 'dark';
   });
+  const [now, setNow] = useState<Date>(new Date());
+  const formatClock = (d: Date) => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  };
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -30,6 +35,12 @@ export default function Layout({ children }: LayoutProps) {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('app_theme', theme);
   }, [theme]);
+
+  // Live clock for header
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   const handleLogout = () => {
     if (confirm('Are you sure you want to logout?')) {
@@ -55,18 +66,18 @@ export default function Layout({ children }: LayoutProps) {
             <div className="flex items-center space-x-4 w-full">
               {/* Date - stick to left */}
               <div className="text-xs sm:text-sm text-gray-600 hidden sm:block mr-auto">
-                {new Date().toLocaleDateString('en-US', { 
+                {now.toLocaleDateString('en-US', { 
                   weekday: 'long', 
                   year: 'numeric', 
                   month: 'long', 
                   day: 'numeric' 
-                })}
+                })} {formatClock(now)}
               </div>
               <div className="text-xs text-gray-600 sm:hidden mr-auto">
-                {new Date().toLocaleDateString('en-US', { 
+                {now.toLocaleDateString('en-US', { 
                   month: 'short', 
                   day: 'numeric' 
-                })}
+                })} {formatClock(now)}
               </div>
               
               {/* Theme Toggle */}
