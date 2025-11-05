@@ -762,9 +762,9 @@ export default function Billing() {
       }
       body {
         font-family: monospace;
-        width: 80mm;
+        width: 76mm; /* add small left/right margins within 80mm roll */
         margin: 0;
-        padding: 0;
+        padding: 0 2mm; /* 2mm left and right padding for small margins */
         font-size: 13px;
         line-height: 1.3;
         color: #000;
