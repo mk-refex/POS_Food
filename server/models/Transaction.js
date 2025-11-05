@@ -10,7 +10,8 @@ export class Transaction extends Model {
 Transaction.init(
   {
     // Sequelize will add an auto-increment `id` primary key by default
-    userId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
+    // Match `users.id` which is a signed INTEGER by default in Sequelize
+    userId: { type: DataTypes.INTEGER, allowNull: true },
     customerType: { type: DataTypes.ENUM('employee', 'guest', 'supportStaff'), allowNull: false },
     customerId: { type: DataTypes.STRING(255), allowNull: true },
     customerName: { type: DataTypes.STRING(255), allowNull: true },

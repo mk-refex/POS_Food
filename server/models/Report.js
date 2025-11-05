@@ -10,7 +10,8 @@ export class Report extends Model {
 Report.init(
   {
     id: { type: DataTypes.INTEGER.UNSIGNED, autoIncrement: true, primaryKey: true },
-    userId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
+    // Match `users.id` which is a signed INTEGER by default in Sequelize
+    userId: { type: DataTypes.INTEGER, allowNull: false },
     title: { type: DataTypes.STRING(255), allowNull: false },
     content: { type: DataTypes.TEXT, allowNull: false },
   },
