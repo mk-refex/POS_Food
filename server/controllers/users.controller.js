@@ -6,7 +6,7 @@ export async function me(req, res) {
   if (!userId) return res.status(401).json({ message: 'Unauthorized' });
   const user = await User.findByPk(userId);
   if (!user) return res.status(404).json({ message: 'User not found' });
-  return res.json({ id: user.id, email: user.email, name: user.name, role: user.role });
+  return res.json({ id: user.id, username: user.username, email: user.email, name: user.name, role: user.role });
 }
 
 const updateSchema = z.object({
@@ -21,10 +21,10 @@ export async function updateUser(req, res) {
   const user = await User.findByPk(userId);
   if (!user) return res.status(404).json({ message: 'User not found' });
   await user.update(parse.data);
-  return res.json({ id: user.id, email: user.email, name: user.name, role: user.role });
+  return res.json({ id: user.id, username: user.username, email: user.email, name: user.name, role: user.role });
 }
 
 export async function listUsers(_req, res) {
   const users = await User.findAll({ order: [['id', 'ASC']] });
-  return res.json(users.map(u => ({ id: u.id, email: u.email, name: u.name, role: u.role })));
+  return res.json(users.map(u => ({ id: u.id, username: u.username, email: u.email, name: u.name, role: u.role })));
 }

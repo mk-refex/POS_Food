@@ -238,7 +238,8 @@ export default function Master() {
       }
 
       // Call our server proxy with auth via apiFetch (adds token automatically)
-      const apiResponse = await apiFetch(`/admin/hrms/employees/active`);
+      // Use /masters/hrms/employees/active instead of /admin/ for non-admin users
+      const apiResponse = await apiFetch(`/masters/hrms/employees/active`);
       let hrmsEmployees: any[] = [];
       if (Array.isArray(apiResponse)) {
         hrmsEmployees = apiResponse;
@@ -253,7 +254,7 @@ export default function Master() {
         const current = Number((apiResponse as any).meta.current_page) || 1;
         for (let p = current + 1; p <= Math.min(total, 20); p++) {
           try {
-            const pageJson = await apiFetch(`/admin/hrms/employees/active?page=${p}`);
+            const pageJson = await apiFetch(`/masters/hrms/employees/active?page=${p}`);
             const pageResults = Array.isArray(pageJson) ? pageJson : pageJson?.results || [];
             hrmsEmployees.push(...pageResults);
           } catch {

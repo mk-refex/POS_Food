@@ -100,8 +100,8 @@ export const mastersApi = {
   // Price Master API
   getPriceMaster: () => apiFetch('/masters/price-master'),
   updatePriceMaster: (data: any) => apiFetch('/masters/price-master', { method: 'PUT', body: JSON.stringify(data) }),
-  // API Config
-  getApiConfig: () => apiFetch('/admin/api-config'),
+  // API Config (read available to all authenticated users, update requires admin)
+  getApiConfig: () => apiFetch('/masters/api-config'),
   updateApiConfig: (data: any) => apiFetch('/admin/api-config', { method: 'PUT', body: JSON.stringify(data) }),
 };
 

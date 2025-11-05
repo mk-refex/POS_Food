@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
+import { Op } from 'sequelize';
 import { User, ApiConfig } from '../models/index.js';
 
 // User Management
@@ -33,6 +34,7 @@ export async function getUserById(req, res) {
 }
 
 const createUserSchema = z.object({
+  username: z.string().min(3).regex(/^[a-zA-Z0-9_.-]+$/).optional(),
   email: z.string().email(),
   password: z.string().min(6),
   name: z.string().min(1),
@@ -49,16 +51,30 @@ export async function createUser(req, res) {
       });
     }
     
-    const { email, password, name, role = 'user' } = parse.data;
+    const { username, email, password, name, role = 'user' } = parse.data;
     
-    // Check if user already exists
-    const existingUser = await User.findOne({ where: { email } });
+    // Check if user already exists by email or username
+    const existingUser = await User.findOne({ 
+      where: { 
+        [Op.or]: [
+          { email },
+          ...(username ? [{ username }] : [])
+        ]
+      } 
+    });
+    
     if (existingUser) {
-      return res.status(409).json({ message: 'Email already in use' });
+      if (existingUser.email === email) {
+        return res.status(409).json({ message: 'Email already in use' });
+      }
+      if (username && existingUser.username === username) {
+        return res.status(409).json({ message: 'Username already in use' });
+      }
     }
     
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await User.create({ 
+      username: username || null,
       email, 
       passwordHash, 
       name, 
@@ -74,6 +90,7 @@ export async function createUser(req, res) {
 }
 
 const updateUserSchema = z.object({
+  username: z.string().min(3).regex(/^[a-zA-Z0-9_.-]+$/).optional(),
   email: z.string().email().optional(),
   name: z.string().min(1).optional(),
   role: z.enum(['admin', 'user']).optional(),
@@ -105,11 +122,18 @@ export async function updateUser(req, res) {
       delete updateData.password;
     }
     
-    // Check email uniqueness if email is being updated
+    // Check email and username uniqueness if being updated
     if (updateData.email && updateData.email !== user.email) {
       const existingUser = await User.findOne({ where: { email: updateData.email } });
       if (existingUser) {
         return res.status(409).json({ message: 'Email already in use' });
+      }
+    }
+    
+    if (updateData.username && updateData.username !== user.username) {
+      const existingUser = await User.findOne({ where: { username: updateData.username } });
+      if (existingUser) {
+        return res.status(409).json({ message: 'Username already in use' });
       }
     }
     

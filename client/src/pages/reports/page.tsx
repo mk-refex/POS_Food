@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
 import Layout from "../../components/feature/Layout";
-import { apiFetch, mastersApi } from "../../api/client";
+import { apiFetch, mastersApi, isAdmin } from "../../api/client";
 
 // Align client types with server's /transactions response
 interface TransactionRecord {
   id: number | string;
+  userId?: number | null;
   customerType: "employee" | "guest" | "supportStaff";
   customerId?: string | null;
   customerName?: string | null;
@@ -20,6 +21,14 @@ interface TransactionRecord {
   }>;
   totalItems: number;
   totalAmount: number;
+}
+
+interface User {
+  id: number;
+  username: string;
+  name: string;
+  email: string;
+  role: string;
 }
 
 interface CompanyReport {
@@ -51,6 +60,7 @@ export default function Reports() {
   const [selectedEmployee, setSelectedEmployee] = useState("");
   const [selectedSupportStaff, setSelectedSupportStaff] = useState("");
   const [selectedCompany, setSelectedCompany] = useState("");
+  const [selectedUser, setSelectedUser] = useState("");
   const [reportData, setReportData] = useState<any[]>([]);
   const [supportStaffReportData, setSupportStaffReportData] = useState<any[]>(
     []
@@ -58,9 +68,16 @@ export default function Reports() {
   const [companyReportData, setCompanyReportData] = useState<CompanyReport[]>(
     []
   );
+  // Store original unfiltered data
+  const [originalReportData, setOriginalReportData] = useState<any[]>([]);
+  const [originalSupportStaffReportData, setOriginalSupportStaffReportData] = useState<any[]>([]);
+  const [originalCompanyReportData, setOriginalCompanyReportData] = useState<CompanyReport[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
   const [supportStaff, setSupportStaff] = useState<any[]>([]);
-  const [companies, setCompanies] = useState<string[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  // Filtered lists based on transactions
+  const [transactionEmployees, setTransactionEmployees] = useState<any[]>([]);
+  const [transactionCompanies, setTransactionCompanies] = useState<string[]>([]);
   const [priceMaster, setPriceMaster] = useState<PriceMaster>({
     employee: { breakfast: 20, lunch: 48 },
     company: { breakfast: 135, lunch: 165 }
@@ -77,11 +94,97 @@ export default function Reports() {
 
   // Load data on component mount
   useEffect(() => {
-    loadReportData();
-    loadEmployees();
-    loadSupportStaff();
-    loadPriceMaster();
+    const initializeData = async () => {
+      let loadedUsers: User[] = [];
+      if (isAdmin()) {
+        loadedUsers = await loadUsers(); // Load users first if admin
+      }
+      await Promise.all([
+        loadReportData(loadedUsers),
+        loadEmployees(),
+        loadSupportStaff(),
+        loadPriceMaster()
+      ]);
+    };
+    initializeData();
   }, []);
+
+  const loadUsers = async (): Promise<User[]> => {
+    try {
+      const usersList: User[] = await apiFetch("/admin/users");
+      setUsers(usersList);
+      return usersList;
+    } catch (error) {
+      console.error('Error loading users:', error);
+      return [];
+    }
+  };
+
+  // Helper function to get user name from userId
+  const getUserName = (userId: number | null | undefined, usersList?: User[]): string => {
+    if (!userId) return "N/A";
+    const usersToSearch = usersList || users;
+    const user = usersToSearch.find(u => u.id === userId);
+    return user ? user.name : "Unknown User";
+  };
+
+  // Update createdBy field when users are loaded
+  useEffect(() => {
+    if (isAdmin() && users.length > 0 && reportData.length > 0) {
+      // Update employee report data with correct user names
+      setReportData(prev => prev.map(record => ({
+        ...record,
+        createdBy: getUserName(record.userId)
+      })));
+    }
+    if (isAdmin() && users.length > 0 && supportStaffReportData.length > 0) {
+      // Update support staff report data with correct user names
+      setSupportStaffReportData(prev => prev.map(record => ({
+        ...record,
+        createdBy: getUserName(record.userId)
+      })));
+    }
+  }, [users]);
+
+  // Update transaction employees when employees list is loaded
+  useEffect(() => {
+    if (employees.length > 0 && originalReportData.length > 0) {
+      const uniqueEmployeeIds = new Set<string>();
+      const employeeMap = new Map<string, { employeeId: string; employeeName: string }>();
+      
+      originalReportData.forEach((record) => {
+        if (record.employeeId) {
+          uniqueEmployeeIds.add(record.employeeId);
+          if (!employeeMap.has(record.employeeId)) {
+            employeeMap.set(record.employeeId, {
+              employeeId: record.employeeId,
+              employeeName: record.employeeName || 'Unknown'
+            });
+          }
+        }
+      });
+
+      // Match with full employee data
+      const filteredEmployees = employees.filter((emp) => 
+        uniqueEmployeeIds.has(emp.employeeId)
+      ).sort((a, b) => (a.employeeName || '').localeCompare(b.employeeName || ''));
+      
+      // If we have matches, use them; otherwise use transaction data
+      if (filteredEmployees.length > 0) {
+        setTransactionEmployees(filteredEmployees);
+      } else {
+        // Use transaction data with proper structure
+        const transactionBasedEmployees = Array.from(employeeMap.values())
+          .map((emp, index) => ({
+            id: index,
+            employeeId: emp.employeeId,
+            employeeName: emp.employeeName
+          }))
+          .sort((a, b) => (a.employeeName || '').localeCompare(b.employeeName || ''));
+        setTransactionEmployees(transactionBasedEmployees);
+      }
+    }
+  }, [employees, originalReportData]);
 
   const loadEmployees = async () => {
     try {
@@ -97,14 +200,6 @@ export default function Reports() {
         if (page > 50) break; // safety guard
       }
       setEmployees(all);
-
-      // Extract unique company names
-      const uniqueCompanies = [
-        ...new Set(
-          all.map((emp: any) => emp.companyName).filter(Boolean)
-        ),
-      ];
-      setCompanies(uniqueCompanies);
     } catch (error) {
       console.error('Error loading employees:', error);
     }
@@ -138,9 +233,12 @@ export default function Reports() {
     }
   };
 
-  const loadReportData = async () => {
+  const loadReportData = async (usersList?: User[]) => {
     try {
       const bills: TransactionRecord[] = await apiFetch("/transactions");
+      
+      // Use provided users list or current users state
+      const usersToUse = usersList || users;
 
       // Process transactions into employee report format (employees and guests only)
       const employeeData = bills
@@ -162,6 +260,8 @@ export default function Reports() {
           const isGuest = bill.customerType === "guest";
           return {
             id: bill.id,
+            userId: bill.userId,
+            createdBy: getUserName(bill.userId, usersToUse),
             employeeId: isGuest ? "GUEST" : bill.customerId || "N/A",
             employeeName: isGuest ? bill.customerName || "Unknown Guest" : bill.customerName || "Unknown",
             company: bill.companyName || "N/A",
@@ -179,6 +279,49 @@ export default function Reports() {
         });
 
       setReportData(employeeData);
+      setOriginalReportData(employeeData); // Store original unfiltered data
+
+      // Extract unique employees and companies from transactions
+      const uniqueEmployeeIds = new Set<string>();
+      const uniqueCompanies = new Set<string>();
+      const employeeMap = new Map<string, { employeeId: string; employeeName: string }>();
+      
+      employeeData.forEach((record) => {
+        // Include both employees and guests (GUEST is also valid)
+        if (record.employeeId) {
+          uniqueEmployeeIds.add(record.employeeId);
+          // Store employee info from transaction
+          if (!employeeMap.has(record.employeeId)) {
+            employeeMap.set(record.employeeId, {
+              employeeId: record.employeeId,
+              employeeName: record.employeeName || 'Unknown'
+            });
+          }
+        }
+        if (record.company && record.company !== "N/A") {
+          uniqueCompanies.add(record.company);
+        }
+      });
+
+      // Match employee IDs with full employee data if available, otherwise use transaction data
+      let filteredEmployees: any[] = [];
+      if (employees.length > 0) {
+        filteredEmployees = employees.filter((emp) => 
+          uniqueEmployeeIds.has(emp.employeeId)
+        ).sort((a, b) => (a.employeeName || '').localeCompare(b.employeeName || ''));
+      } else {
+        // If employees not loaded yet, use transaction data with proper structure
+        filteredEmployees = Array.from(employeeMap.values())
+          .map((emp, index) => ({
+            id: index, // Add id for React key
+            employeeId: emp.employeeId,
+            employeeName: emp.employeeName
+          }))
+          .sort((a, b) => (a.employeeName || '').localeCompare(b.employeeName || ''));
+      }
+      
+      setTransactionEmployees(filteredEmployees);
+      setTransactionCompanies(Array.from(uniqueCompanies).sort());
 
       // Process support staff report (ONLY support staff)
       const supportStaffData = bills
@@ -199,6 +342,8 @@ export default function Reports() {
 
           return {
             id: bill.id,
+            userId: bill.userId,
+            createdBy: getUserName(bill.userId, usersToUse),
             staffId: bill.customerId || "N/A",
             staffName: bill.customerName || "Unknown",
             designation: (supportStaff.find((s) => s.staffId === bill.customerId)?.designation) || "N/A",
@@ -216,6 +361,7 @@ export default function Reports() {
         });
 
       setSupportStaffReportData(supportStaffData);
+      setOriginalSupportStaffReportData(supportStaffData); // Store original unfiltered data
 
       // Company-wise report data (use server-provided totalAmount)
       const companyStats: { [key: string]: CompanyReport } = {};
@@ -265,6 +411,7 @@ export default function Reports() {
         (a, b) => b.totalAmount - a.totalAmount
       );
       setCompanyReportData(companyArray);
+      setOriginalCompanyReportData(companyArray); // Store original unfiltered data
 
       // Calculate summary statistics based on active tab
       updateSummaryStats(
@@ -332,9 +479,21 @@ export default function Reports() {
   };
 
   const handleGenerateReport = async () => {
-    let filteredEmployeeData = [...reportData];
-    let filteredSupportStaffData = [...supportStaffReportData];
-    let filteredCompanyData = [...companyReportData];
+    // Ensure users are loaded if admin
+    if (isAdmin() && users.length === 0) {
+      await loadUsers();
+    }
+
+    // Always start from original unfiltered data and refresh with correct user names
+    let filteredEmployeeData = originalReportData.map(record => ({
+      ...record,
+      createdBy: getUserName(record.userId)
+    }));
+    let filteredSupportStaffData = originalSupportStaffReportData.map(record => ({
+      ...record,
+      createdBy: getUserName(record.userId)
+    }));
+    let filteredCompanyData = [...originalCompanyReportData];
 
     // Filter by date range
     if (startDate || endDate) {
@@ -373,6 +532,8 @@ export default function Reports() {
             const isGuest = bill.customerType === "guest";
             return {
               id: bill.id,
+              userId: bill.userId,
+              createdBy: getUserName(bill.userId, users),
               employeeId: isGuest ? "GUEST" : bill.customerId || "N/A",
               employeeName: isGuest ? bill.customerName || "Unknown Guest" : bill.customerName || "Unknown",
               company: bill.companyName || "N/A",
@@ -410,6 +571,8 @@ export default function Reports() {
 
             return {
               id: bill.id,
+              userId: bill.userId,
+              createdBy: getUserName(bill.userId, users),
               staffId: bill.customerId || "N/A",
               staffName: bill.customerName || "Unknown",
               designation: (supportStaff.find((s) => s.staffId === bill.customerId)?.designation) || "N/A",
@@ -474,6 +637,51 @@ export default function Reports() {
         filteredCompanyData = Object.values(companyStats).sort(
           (a, b) => b.totalAmount - a.totalAmount
         );
+        
+        // Update original data when filtering by date range
+        setOriginalReportData(employeeData);
+        setOriginalSupportStaffReportData(supportStaffData);
+        setOriginalCompanyReportData(filteredCompanyData);
+        
+        // Extract unique employees and companies from filtered transactions
+        const uniqueEmployeeIds = new Set<string>();
+        const uniqueCompanies = new Set<string>();
+        const employeeMap = new Map<string, { employeeId: string; employeeName: string }>();
+        
+        employeeData.forEach((record) => {
+          if (record.employeeId && record.employeeId !== "GUEST") {
+            uniqueEmployeeIds.add(record.employeeId);
+            if (!employeeMap.has(record.employeeId)) {
+              employeeMap.set(record.employeeId, {
+                employeeId: record.employeeId,
+                employeeName: record.employeeName
+              });
+            }
+          }
+          if (record.company && record.company !== "N/A") {
+            uniqueCompanies.add(record.company);
+          }
+        });
+
+        // Match employee IDs with full employee data if available, otherwise use transaction data
+        let filteredEmployees: any[] = [];
+        if (employees.length > 0) {
+          filteredEmployees = employees.filter((emp) => 
+            uniqueEmployeeIds.has(emp.employeeId)
+          ).sort((a, b) => (a.employeeName || '').localeCompare(b.employeeName || ''));
+        } else {
+          // If employees not loaded yet, use transaction data with proper structure
+          filteredEmployees = Array.from(employeeMap.values())
+            .map((emp, index) => ({
+              id: index, // Add id for React key
+              employeeId: emp.employeeId,
+              employeeName: emp.employeeName
+            }))
+            .sort((a, b) => (a.employeeName || '').localeCompare(b.employeeName || ''));
+        }
+        
+        setTransactionEmployees(filteredEmployees);
+        setTransactionCompanies(Array.from(uniqueCompanies).sort());
       } catch (err) {
         console.error(err);
       }
@@ -514,6 +722,17 @@ export default function Reports() {
       );
     }
 
+    // Filter by user (only for admins)
+    if (isAdmin() && selectedUser) {
+      const userId = Number(selectedUser);
+      filteredEmployeeData = filteredEmployeeData.filter(
+        (record) => record.userId === userId
+      );
+      filteredSupportStaffData = filteredSupportStaffData.filter(
+        (record) => record.userId === userId
+      );
+    }
+
     // Apply sorting
     const applySort = <T,>(arr: T[], key: string) => {
       if (!key) return arr;
@@ -546,17 +765,29 @@ export default function Reports() {
     setCompanyReportData(filteredCompanyData);
   };
 
-  const handleClearFilters = () => {
+  const handleClearFilters = async () => {
     setStartDate('');
     setEndDate('');
     setSelectedEmployee('');
     setSelectedSupportStaff('');
     setSelectedCompany('');
+    setSelectedUser('');
     setSortKey('');
     setSortDir('ASC');
     setCurrentPage(1);
-    // Reload original data
-    loadReportData();
+    
+    // Ensure users are loaded if admin
+    let loadedUsers: User[] = [];
+    if (isAdmin()) {
+      if (users.length === 0) {
+        loadedUsers = await loadUsers();
+      } else {
+        loadedUsers = users;
+      }
+    }
+    
+    // Reload original data with users
+    await loadReportData(loadedUsers);
   };
 
   // Pagination helper functions
@@ -577,6 +808,224 @@ export default function Reports() {
   const handleItemsPerPageChange = (items: number) => {
     setItemsPerPage(items);
     setCurrentPage(1);
+  };
+
+  const handleDeleteTransaction = async (transactionId: number) => {
+    if (!confirm('Are you sure you want to delete this transaction? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      await apiFetch(`/transactions/${transactionId}`, {
+        method: 'DELETE',
+      });
+      
+      // Optimistically remove from current view immediately
+      setReportData(prev => prev.filter(record => record.id !== transactionId));
+      setSupportStaffReportData(prev => prev.filter(record => record.id !== transactionId));
+      
+      // Reset to first page
+      setCurrentPage(1);
+      
+      // Fetch fresh data from server
+      const bills: TransactionRecord[] = await apiFetch("/transactions");
+      
+      // Process fresh data (same logic as loadReportData)
+      const employeeData = bills
+        .filter((bill) => bill.customerType === "employee" || bill.customerType === "guest")
+        .map((bill) => {
+          const breakfastItems = bill.items
+            .filter((item) => item.name === "Breakfast")
+            .reduce((sum, item) => sum + item.quantity, 0);
+          const lunchItems = bill.items
+            .filter((item) => item.name === "Lunch")
+            .reduce((sum, item) => sum + item.quantity, 0);
+          const exceptionBreakfast = bill.items
+            .filter((item) => item.name === "Breakfast" && item.isException)
+            .reduce((sum, item) => sum + item.quantity, 0);
+          const exceptionLunch = bill.items
+            .filter((item) => item.name === "Lunch" && item.isException)
+            .reduce((sum, item) => sum + item.quantity, 0);
+          const isGuest = bill.customerType === "guest";
+          return {
+            id: bill.id,
+            userId: bill.userId,
+            createdBy: getUserName(bill.userId, users),
+            employeeId: isGuest ? "GUEST" : bill.customerId || "N/A",
+            employeeName: isGuest ? bill.customerName || "Unknown Guest" : bill.customerName || "Unknown",
+            company: bill.companyName || "N/A",
+            date: bill.date,
+            time: bill.time,
+            breakfast: breakfastItems,
+            lunch: lunchItems,
+            exceptionBreakfast,
+            exceptionLunch,
+            hasException: exceptionBreakfast > 0 || exceptionLunch > 0,
+            totalItems: bill.totalItems,
+            amount: bill.totalAmount,
+            isGuest,
+          };
+        });
+
+      const supportStaffData = bills
+        .filter((bill) => bill.customerType === "supportStaff")
+        .map((bill) => {
+          const breakfastItems = bill.items
+            .filter((item) => item.name === "Breakfast")
+            .reduce((sum, item) => sum + item.quantity, 0);
+          const lunchItems = bill.items
+            .filter((item) => item.name === "Lunch")
+            .reduce((sum, item) => sum + item.quantity, 0);
+          const exceptionBreakfast = bill.items
+            .filter((item) => item.name === "Breakfast" && item.isException)
+            .reduce((sum, item) => sum + item.quantity, 0);
+          const exceptionLunch = bill.items
+            .filter((item) => item.name === "Lunch" && item.isException)
+            .reduce((sum, item) => sum + item.quantity, 0);
+          return {
+            id: bill.id,
+            userId: bill.userId,
+            createdBy: getUserName(bill.userId, users),
+            staffId: bill.customerId || "N/A",
+            staffName: bill.customerName || "Unknown",
+            designation: (supportStaff.find((s) => s.staffId === bill.customerId)?.designation) || "N/A",
+            company: bill.companyName || "N/A",
+            date: bill.date,
+            time: bill.time,
+            breakfast: breakfastItems,
+            lunch: lunchItems,
+            exceptionBreakfast,
+            exceptionLunch,
+            hasException: exceptionBreakfast > 0 || exceptionLunch > 0,
+            totalItems: bill.totalItems,
+            amount: bill.totalAmount,
+          };
+        });
+
+      // Update company stats
+      const companyStats: { [key: string]: CompanyReport } = {};
+      bills.forEach((bill) => {
+        const companyName = bill.companyName || (bill.customerType === "guest" ? "Guest Company" : "Unknown Company");
+        const breakfastItems = bill.items
+          .filter((item) => item.name === "Breakfast")
+          .reduce((sum, item) => sum + item.quantity, 0);
+        const lunchItems = bill.items
+          .filter((item) => item.name === "Lunch")
+          .reduce((sum, item) => sum + item.quantity, 0);
+        if (!companyStats[companyName]) {
+          companyStats[companyName] = {
+            companyName,
+            totalEmployees: 0,
+            totalTransactions: 0,
+            breakfast: 0,
+            lunch: 0,
+            totalItems: 0,
+            totalAmount: 0,
+            employees: [],
+          };
+        }
+        companyStats[companyName].totalTransactions += 1;
+        companyStats[companyName].breakfast += breakfastItems;
+        companyStats[companyName].lunch += lunchItems;
+        companyStats[companyName].totalItems += bill.totalItems;
+        const companyBreakfastAmount = breakfastItems * priceMaster.company.breakfast;
+        const companyLunchAmount = lunchItems * priceMaster.company.lunch;
+        companyStats[companyName].totalAmount += companyBreakfastAmount + companyLunchAmount;
+        const employeeName = bill.customerName || (bill.customerType === "guest" ? "Guest" : "Unknown");
+        if (!companyStats[companyName].employees.includes(employeeName)) {
+          companyStats[companyName].employees.push(employeeName);
+          companyStats[companyName].totalEmployees += 1;
+        }
+      });
+
+      const companyArray = Object.values(companyStats).sort(
+        (a, b) => b.totalAmount - a.totalAmount
+      );
+
+      // Now apply filters using the fresh data
+      let filteredEmployeeData = employeeData;
+      let filteredSupportStaffData = supportStaffData;
+      let filteredCompanyData = companyArray;
+
+      // Filter by date range
+      if (startDate || endDate) {
+        if (startDate) {
+          filteredEmployeeData = filteredEmployeeData.filter((record) => record.date >= startDate);
+          filteredSupportStaffData = filteredSupportStaffData.filter((record) => record.date >= startDate);
+        }
+        if (endDate) {
+          filteredEmployeeData = filteredEmployeeData.filter((record) => record.date <= endDate);
+          filteredSupportStaffData = filteredSupportStaffData.filter((record) => record.date <= endDate);
+        }
+      }
+
+      // Filter by employee
+      if (selectedEmployee) {
+        filteredEmployeeData = filteredEmployeeData.filter(
+          (record) =>
+            record.employeeId === selectedEmployee ||
+            record.employeeName.toLowerCase().includes(selectedEmployee.toLowerCase())
+        );
+      }
+
+      // Filter by support staff
+      if (selectedSupportStaff) {
+        filteredSupportStaffData = filteredSupportStaffData.filter(
+          (record) =>
+            record.staffId === selectedSupportStaff ||
+            record.staffName.toLowerCase().includes(selectedSupportStaff.toLowerCase())
+        );
+      }
+
+      // Filter by company
+      if (selectedCompany) {
+        filteredEmployeeData = filteredEmployeeData.filter((record) => record.company === selectedCompany);
+        filteredSupportStaffData = filteredSupportStaffData.filter((record) => record.company === selectedCompany);
+        filteredCompanyData = filteredCompanyData.filter((company) => company.companyName === selectedCompany);
+      }
+
+      // Filter by user (only for admins)
+      if (isAdmin() && selectedUser) {
+        const userId = Number(selectedUser);
+        filteredEmployeeData = filteredEmployeeData.filter(
+          (record) => record.userId === userId
+        );
+        filteredSupportStaffData = filteredSupportStaffData.filter(
+          (record) => record.userId === userId
+        );
+      }
+
+      // Apply sorting
+      const applySort = <T,>(arr: T[], key: string) => {
+        if (!key) return arr;
+        const dir = sortDir === 'ASC' ? 1 : -1;
+        return [...arr].sort((a: any, b: any) => {
+          const av = a?.[key];
+          const bv = b?.[key];
+          if (av == null && bv == null) return 0;
+          if (av == null) return -1 * dir;
+          if (bv == null) return 1 * dir;
+          if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+          return String(av).localeCompare(String(bv)) * dir;
+        });
+      };
+
+      filteredEmployeeData = applySort(filteredEmployeeData, sortKey);
+      filteredSupportStaffData = applySort(filteredSupportStaffData, sortKey);
+      filteredCompanyData = applySort(filteredCompanyData as any[], sortKey) as any[];
+
+      // Update summary stats
+      updateSummaryStats(activeTab, filteredEmployeeData, filteredSupportStaffData, filteredCompanyData);
+
+      // Update state with filtered data
+      setReportData(filteredEmployeeData);
+      setSupportStaffReportData(filteredSupportStaffData);
+      setCompanyReportData(filteredCompanyData);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to delete transaction');
+      // Reload data on error to ensure consistency
+      await loadReportData();
+    }
   };
 
   const handleExportReport = async () => {
@@ -813,9 +1262,9 @@ export default function Reports() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none pr-8"
                   >
                     <option value="">All Employees</option>
-                    {employees.map((emp) => (
-                      <option key={emp.id} value={emp.employeeId}>
-                        {emp.employeeName} ({emp.employeeId})
+                    {transactionEmployees.map((emp, index) => (
+                      <option key={emp.id || emp.employeeId || index} value={emp.employeeId}>
+                        {emp.employeeName || 'Unknown'} ({emp.employeeId || 'N/A'})
                       </option>
                     ))}
                   </select>
@@ -852,13 +1301,33 @@ export default function Reports() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none pr-8"
                 >
                   <option value="">All Companies</option>
-                  {companies.map((company) => (
+                  {transactionCompanies.map((company) => (
                     <option key={company} value={company}>
                       {company}
                     </option>
                   ))}
                 </select>
               </div>
+
+              {isAdmin() && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Created By
+                  </label>
+                  <select
+                    value={selectedUser}
+                    onChange={(e) => setSelectedUser(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none pr-8"
+                  >
+                    <option value="">All Users</option>
+                    {users.map((user) => (
+                      <option key={user.id} value={user.id}>
+                        {user.name} ({user.username})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className="flex items-end gap-2 sm:col-span-2 md:col-span-2 lg:col-span-2 xl:col-span-2">
                 <button
@@ -916,6 +1385,14 @@ export default function Reports() {
                     >
                       Company {sortKey === 'company' ? (sortDir === 'ASC' ? '▲' : '▼') : ''}
                     </th>
+                    {isAdmin() && (
+                      <th
+                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer select-none"
+                        onClick={() => { setSortKey('createdBy'); setSortDir(sortKey === 'createdBy' && sortDir === 'ASC' ? 'DESC' : 'ASC'); handleGenerateReport(); }}
+                      >
+                        Created By {sortKey === 'createdBy' ? (sortDir === 'ASC' ? '▲' : '▼') : ''}
+                      </th>
+                    )}
                     <th
                       className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer select-none"
                       onClick={() => { setSortKey('date'); setSortDir(sortKey === 'date' && sortDir === 'ASC' ? 'DESC' : 'ASC'); handleGenerateReport(); }}
@@ -943,13 +1420,18 @@ export default function Reports() {
                     >
                       Amount {sortKey === 'amount' ? (sortDir === 'ASC' ? '▲' : '▼') : ''}
                     </th>
+                    {isAdmin() && (
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Actions
+                      </th>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {reportData.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={9}
+                        colSpan={isAdmin() ? 11 : 9}
                         className="px-6 py-8 text-center text-gray-500"
                       >
                         No employee or guest report data available. Generate
@@ -989,6 +1471,11 @@ export default function Reports() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {record.company}
                         </td>
+                        {isAdmin() && (
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {record.createdBy}
+                          </td>
+                        )}
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {record.date}
                         </td>
@@ -1013,6 +1500,17 @@ export default function Reports() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           ₹{record.amount}
                         </td>
+                        {isAdmin() && (
+                          <td className="px-6 py-4 whitespace-nowrap text-sm">
+                            <button
+                              onClick={() => handleDeleteTransaction(record.id)}
+                              className="text-red-600 hover:text-red-800 hover:bg-red-50 px-3 py-1 rounded-md transition-colors cursor-pointer"
+                              title="Delete transaction"
+                            >
+                              <i className="ri-delete-bin-line"></i>
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     ))
                   )}
@@ -1123,6 +1621,14 @@ export default function Reports() {
                     >
                       Company {sortKey === 'company' ? (sortDir === 'ASC' ? '▲' : '▼') : ''}
                     </th>
+                    {isAdmin() && (
+                      <th
+                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer select-none"
+                        onClick={() => { setSortKey('createdBy'); setSortDir(sortKey === 'createdBy' && sortDir === 'ASC' ? 'DESC' : 'ASC'); handleGenerateReport(); }}
+                      >
+                        Created By {sortKey === 'createdBy' ? (sortDir === 'ASC' ? '▲' : '▼') : ''}
+                      </th>
+                    )}
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Date
                     </th>
@@ -1147,13 +1653,18 @@ export default function Reports() {
                     >
                       Amount {sortKey === 'amount' ? (sortDir === 'ASC' ? '▲' : '▼') : ''}
                     </th>
+                    {isAdmin() && (
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Actions
+                      </th>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {supportStaffReportData.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={10}
+                        colSpan={isAdmin() ? 11 : 9}
                         className="px-6 py-8 text-center text-gray-500"
                       >
                         No support staff report data available. Generate reports
@@ -1180,6 +1691,11 @@ export default function Reports() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {record.company}
                         </td>
+                        {isAdmin() && (
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {record.createdBy}
+                          </td>
+                        )}
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {record.date}
                         </td>
@@ -1204,6 +1720,17 @@ export default function Reports() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           ₹{record.amount}
                         </td>
+                        {isAdmin() && (
+                          <td className="px-6 py-4 whitespace-nowrap text-sm">
+                            <button
+                              onClick={() => handleDeleteTransaction(record.id)}
+                              className="text-red-600 hover:text-red-800 hover:bg-red-50 px-3 py-1 rounded-md transition-colors cursor-pointer"
+                              title="Delete transaction"
+                            >
+                              <i className="ri-delete-bin-line"></i>
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     ))
                   )}

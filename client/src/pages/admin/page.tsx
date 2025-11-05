@@ -5,6 +5,7 @@ import { apiFetch, isAdmin, mastersApi } from '../../api/client';
 
 interface User {
   id: number;
+  username?: string | null;
   email: string;
   name: string;
   role: 'admin' | 'user';
@@ -62,11 +63,15 @@ export default function AdminPanel() {
 
   // Form data
   const [userForm, setUserForm] = useState({
+    username: '',
     email: '',
     password: '',
     name: '',
     role: 'user' as 'admin' | 'user'
   });
+  
+  // Form validation errors
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
   // company form state removed
 
@@ -129,9 +134,62 @@ export default function AdminPanel() {
 
   const handleUserSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Client-side validation
+    setFormErrors({});
+    const errors: Record<string, string> = {};
+    
+    // Validate username format if provided
+    if (userForm.username && !/^[a-zA-Z0-9_.-]+$/.test(userForm.username)) {
+      errors.username = 'Username can only contain letters, numbers, dots, underscores, and hyphens';
+    }
+    
+    if (userForm.username && userForm.username.length < 3) {
+      errors.username = 'Username must be at least 3 characters';
+    }
+    
+    // Validate email format
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userForm.email)) {
+      errors.email = 'Invalid email format';
+    }
+    
+    // Check for existing username and email before submission
+    if (!editingItem && userForm.username) {
+      const existingByUsername = users.find(u => u.username?.toLowerCase() === userForm.username.toLowerCase());
+      if (existingByUsername) {
+        errors.username = 'Username already in use';
+      }
+    }
+    
+    if (!editingItem) {
+      const existingByEmail = users.find(u => u.email.toLowerCase() === userForm.email.toLowerCase());
+      if (existingByEmail) {
+        errors.email = 'Email already in use';
+      }
+    }
+    
+    // Check for conflicts when editing
+    if (editingItem) {
+      const existingByUsername = users.find(u => u.id !== editingItem.id && u.username?.toLowerCase() === userForm.username.toLowerCase());
+      if (existingByUsername) {
+        errors.username = 'Username already in use';
+      }
+      
+      const existingByEmail = users.find(u => u.id !== editingItem.id && u.email.toLowerCase() === userForm.email.toLowerCase());
+      if (existingByEmail) {
+        errors.email = 'Email already in use';
+      }
+    }
+    
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      return;
+    }
+    
     try {
       setLoading(true);
       setError('');
+      setFormErrors({});
       
       if (editingItem) {
         await apiFetch(`/admin/users/${editingItem.id}`, {
@@ -149,10 +207,21 @@ export default function AdminPanel() {
       
       setShowUserForm(false);
       setEditingItem(null);
-      setUserForm({ email: '', password: '', name: '', role: 'user' });
+      setUserForm({ username: '', email: '', password: '', name: '', role: 'user' });
+      setFormErrors({});
       loadData();
     } catch (err: any) {
-      setError(err.message || 'Failed to save user');
+      const errorMessage = err.message || 'Failed to save user';
+      setError(errorMessage);
+      
+      // Parse server-side validation errors if available
+      if (err.errors) {
+        setFormErrors(err.errors);
+      } else if (errorMessage.includes('Email already in use')) {
+        setFormErrors({ email: 'Email already in use' });
+      } else if (errorMessage.includes('Username already in use')) {
+        setFormErrors({ username: 'Username already in use' });
+      }
     } finally {
       setLoading(false);
     }
@@ -191,11 +260,13 @@ export default function AdminPanel() {
     
     if (type === 'user') {
       setUserForm({
+        username: item.username || '',
         email: item.email,
         password: '',
         name: item.name,
         role: item.role
       });
+      setFormErrors({});
       setShowUserForm(true);
     }
   };
@@ -272,7 +343,8 @@ export default function AdminPanel() {
               <button
                 onClick={() => {
                   setEditingItem(null);
-                  setUserForm({ email: '', password: '', name: '', role: 'user' });
+                  setUserForm({ username: '', email: '', password: '', name: '', role: 'user' });
+                  setFormErrors({});
                   setShowUserForm(true);
                 }}
                 className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
@@ -288,6 +360,7 @@ export default function AdminPanel() {
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Username</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
@@ -298,6 +371,7 @@ export default function AdminPanel() {
                     {users.slice((userPage-1)*userLimit, (userPage-1)*userLimit + userLimit).map((user) => (
                       <tr key={user.id}>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{user.name}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{user.username || '-'}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{user.email}</td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
@@ -431,20 +505,57 @@ export default function AdminPanel() {
                   <input
                     type="text"
                     value={userForm.name}
-                    onChange={(e) => setUserForm({ ...userForm, name: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    onChange={(e) => {
+                      setUserForm({ ...userForm, name: e.target.value });
+                      if (formErrors.name) setFormErrors({ ...formErrors, name: '' });
+                    }}
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none ${
+                      formErrors.name ? 'border-red-300' : 'border-gray-300'
+                    }`}
                     required
                   />
+                  {formErrors.name && (
+                    <p className="mt-1 text-sm text-red-600">{formErrors.name}</p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Username <span className="text-gray-500 text-xs">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={userForm.username}
+                    onChange={(e) => {
+                      setUserForm({ ...userForm, username: e.target.value });
+                      if (formErrors.username) setFormErrors({ ...formErrors, username: '' });
+                    }}
+                    placeholder="e.g., john_doe"
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none ${
+                      formErrors.username ? 'border-red-300' : 'border-gray-300'
+                    }`}
+                  />
+                  {formErrors.username && (
+                    <p className="mt-1 text-sm text-red-600">{formErrors.username}</p>
+                  )}
+                  <p className="mt-1 text-xs text-gray-500">Letters, numbers, dots, underscores, and hyphens only. Min 3 characters.</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
                   <input
                     type="email"
                     value={userForm.email}
-                    onChange={(e) => setUserForm({ ...userForm, email: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    onChange={(e) => {
+                      setUserForm({ ...userForm, email: e.target.value });
+                      if (formErrors.email) setFormErrors({ ...formErrors, email: '' });
+                    }}
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none ${
+                      formErrors.email ? 'border-red-300' : 'border-gray-300'
+                    }`}
                     required
                   />
+                  {formErrors.email && (
+                    <p className="mt-1 text-sm text-red-600">{formErrors.email}</p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
@@ -470,7 +581,10 @@ export default function AdminPanel() {
                 <div className="flex space-x-3 pt-4">
                   <button
                     type="button"
-                    onClick={() => setShowUserForm(false)}
+                    onClick={() => {
+                      setShowUserForm(false);
+                      setFormErrors({});
+                    }}
                     className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
                   >
                     Cancel

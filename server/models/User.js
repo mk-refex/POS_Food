@@ -10,6 +10,7 @@ export class User extends Model {
 User.init(
   {
     // Sequelize will add an auto-increment `id` primary key by default
+    username: { type: DataTypes.STRING(255), allowNull: true, unique: true },
     email: { type: DataTypes.STRING(255), allowNull: false, unique: true },
     passwordHash: { type: DataTypes.STRING(255), allowNull: false },
     name: { type: DataTypes.STRING(255), allowNull: false },

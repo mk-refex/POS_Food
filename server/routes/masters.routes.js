@@ -16,6 +16,7 @@ import {
   getPriceMaster,
   updatePriceMaster
 } from '../controllers/masters.controller.js';
+import { fetchHrmsEmployees, getApiConfig } from '../controllers/admin.controller.js';
 
 const router = express.Router();
 
@@ -40,5 +41,11 @@ router.delete('/guests/:id', authRequired, deleteGuest);
 // Price Master routes
 router.get('/price-master', authRequired, getPriceMaster);
 router.put('/price-master', authRequired, updatePriceMaster);
+
+// API Config (read-only for all authenticated users)
+router.get('/api-config', authRequired, getApiConfig);
+
+// HRMS sync route (available to all authenticated users)
+router.get('/hrms/employees/active', authRequired, fetchHrmsEmployees);
 
 export default router;

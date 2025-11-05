@@ -21,6 +21,7 @@ export async function initializeDatabase() {
     // Avoid MySQL "Too many keys specified" by not using alter in production
     // Use plain sync to ensure connection without attempting to recreate indexes
     await sequelize.sync();
+    // Ensure username column exists (older DBs won't auto-add new columns on sync)
   } catch (error) {
     throw error;
   }

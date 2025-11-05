@@ -26,7 +26,7 @@ import {
 } from "@mui/icons-material";
 
 export default function Login() {
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -36,8 +36,8 @@ export default function Login() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) {
-      setError("Please enter both email and password");
+    if (!identifier || !password) {
+      setError("Please enter email/username and password");
       return;
     }
 
@@ -48,7 +48,7 @@ export default function Login() {
 
       const data = await apiFetch("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ identifier, password }),
       });
 
       localStorage.setItem("auth_token", data.token);
@@ -215,16 +215,16 @@ export default function Login() {
               fullWidth
               margin="normal"
               variant="outlined"
-              error={Boolean(fieldErrors.email)}
+              error={Boolean(fieldErrors.identifier)}
               required
             >
-              <InputLabel htmlFor="login-email">Email Address</InputLabel>
+              <InputLabel htmlFor="login-identifier">Email or Username</InputLabel>
               <OutlinedInput
-                id="login-email"
-                type="email"
-                label="Email Address"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                id="login-identifier"
+                type="text"
+                label="Email or Username"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
                 startAdornment={
                   <InputAdornment position="start">
                     <MailOutline />
@@ -254,8 +254,8 @@ export default function Login() {
                   },
                 }}
               />
-              {fieldErrors.email && (
-                <FormHelperText>{fieldErrors.email}</FormHelperText>
+              {fieldErrors.identifier && (
+                <FormHelperText>{fieldErrors.identifier}</FormHelperText>
               )}
             </FormControl>
 

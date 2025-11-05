@@ -89,3 +89,26 @@ export async function listTransactions(req, res) {
   const transactions = await Transaction.findAll({ where, order: [['id', 'DESC']] });
   return res.json(transactions);
 }
+
+export async function deleteTransaction(req, res) {
+  const transactionId = Number(req.params.id);
+  const user = req.user;
+  const isAdmin = user?.role === 'admin';
+  
+  try {
+    const transaction = await Transaction.findByPk(transactionId);
+    if (!transaction) {
+      return res.status(404).json({ message: 'Transaction not found' });
+    }
+    
+    // Non-admin users can only delete their own transactions
+    if (!isAdmin && transaction.userId !== user?.userId) {
+      return res.status(403).json({ message: 'Unauthorized to delete this transaction' });
+    }
+    
+    await transaction.destroy();
+    return res.json({ message: 'Transaction deleted successfully' });
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to delete transaction', error: error.message });
+  }
+}

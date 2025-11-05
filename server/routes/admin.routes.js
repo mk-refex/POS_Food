@@ -30,8 +30,5 @@ router.delete('/users/:id', deleteUser);
 // API Config routes
 router.get('/api-config', getApiConfig);
 router.put('/api-config', upsertApiConfig);
-// HRMS proxy
-import { fetchHrmsEmployees } from '../controllers/admin.controller.js';
-router.get('/hrms/employees/active', fetchHrmsEmployees);
 
 export default router;
