@@ -12,6 +12,7 @@ interface TransactionRecord {
   companyName?: string | null;
   date: string;
   time: string;
+  createdAt?: string | Date;
   items: Array<{
     id?: string;
     name: string;
@@ -99,11 +100,12 @@ export default function Reports() {
       if (isAdmin()) {
         loadedUsers = await loadUsers(); // Load users first if admin
       }
+      // Load price master first, then load report data with the loaded price master
+      const loadedPriceMaster = await loadPriceMaster();
       await Promise.all([
-        loadReportData(loadedUsers),
+        loadReportData(loadedUsers, loadedPriceMaster),
         loadEmployees(),
-        loadSupportStaff(),
-        loadPriceMaster()
+        loadSupportStaff()
       ]);
     };
     initializeData();
@@ -126,6 +128,32 @@ export default function Reports() {
     const usersToSearch = usersList || users;
     const user = usersToSearch.find(u => u.id === userId);
     return user ? user.name : "Unknown User";
+  };
+
+  // Helper function to format createdAt as "Billed On" (date and time together)
+  const formatBilledOn = (createdAt: string | Date | null | undefined, date?: string, time?: string): string => {
+    if (createdAt) {
+      try {
+        const dateObj = new Date(createdAt);
+        if (!isNaN(dateObj.getTime())) {
+          // Format as "DD/MM/YYYY HH:MM:SS"
+          const day = String(dateObj.getDate()).padStart(2, '0');
+          const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+          const year = dateObj.getFullYear();
+          const hours = String(dateObj.getHours()).padStart(2, '0');
+          const minutes = String(dateObj.getMinutes()).padStart(2, '0');
+          const seconds = String(dateObj.getSeconds()).padStart(2, '0');
+          return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+        }
+      } catch (e) {
+        // Fall through to date/time fallback
+      }
+    }
+    // Fallback to date and time if createdAt is not available
+    if (date && time) {
+      return `${date} ${time}`;
+    }
+    return date || time || "N/A";
   };
 
   // Update createdBy field when users are loaded
@@ -224,21 +252,30 @@ export default function Reports() {
     }
   };
 
-  const loadPriceMaster = async () => {
+  const loadPriceMaster = async (): Promise<PriceMaster> => {
     try {
       const priceMasterData = await mastersApi.getPriceMaster();
       setPriceMaster(priceMasterData);
+      return priceMasterData;
     } catch (error) {
       console.error('Error loading price master:', error);
+      // Return default values if loading fails
+      return {
+        employee: { breakfast: 20, lunch: 48 },
+        company: { breakfast: 135, lunch: 165 }
+      };
     }
   };
 
-  const loadReportData = async (usersList?: User[]) => {
+  const loadReportData = async (usersList?: User[], priceMasterData?: PriceMaster) => {
     try {
       const bills: TransactionRecord[] = await apiFetch("/transactions");
       
       // Use provided users list or current users state
       const usersToUse = usersList || users;
+      
+      // Use provided price master or current price master state
+      const priceMasterToUse = priceMasterData || priceMaster;
 
       // Process transactions into employee report format (employees and guests only)
       const employeeData = bills
@@ -267,6 +304,7 @@ export default function Reports() {
             company: bill.companyName || "N/A",
             date: bill.date,
             time: bill.time,
+            createdAt: bill.createdAt || null,
             breakfast: breakfastItems,
             lunch: lunchItems,
             exceptionBreakfast,
@@ -350,6 +388,7 @@ export default function Reports() {
             company: bill.companyName || "N/A",
             date: bill.date,
             time: bill.time,
+            createdAt: bill.createdAt || null,
             breakfast: breakfastItems,
             lunch: lunchItems,
             exceptionBreakfast,
@@ -395,8 +434,9 @@ export default function Reports() {
         companyStats[companyName].totalItems += bill.totalItems;
 
         // Calculate total amount using Company/Guest pricing from price master
-        const companyBreakfastAmount = breakfastItems * priceMaster.company.breakfast;
-        const companyLunchAmount = lunchItems * priceMaster.company.lunch;
+        // Formula: totalAmount = (breakfastItems × company.breakfast) + (lunchItems × company.lunch)
+        const companyBreakfastAmount = breakfastItems * priceMasterToUse.company.breakfast;
+        const companyLunchAmount = lunchItems * priceMasterToUse.company.lunch;
         companyStats[companyName].totalAmount += companyBreakfastAmount + companyLunchAmount;
 
         // Track unique employees
@@ -484,6 +524,9 @@ export default function Reports() {
       await loadUsers();
     }
 
+    // Reload price master to ensure we have the latest values
+    const currentPriceMaster = await loadPriceMaster();
+
     // Always start from original unfiltered data and refresh with correct user names
     let filteredEmployeeData = originalReportData.map(record => ({
       ...record,
@@ -539,6 +582,7 @@ export default function Reports() {
               company: bill.companyName || "N/A",
               date: bill.date,
               time: bill.time,
+              createdAt: bill.createdAt || null,
               breakfast: breakfastItems,
               lunch: lunchItems,
               exceptionBreakfast,
@@ -579,6 +623,7 @@ export default function Reports() {
               company: bill.companyName || "N/A",
               date: bill.date,
               time: bill.time,
+              createdAt: bill.createdAt || null,
               breakfast: breakfastItems,
               lunch: lunchItems,
               exceptionBreakfast,
@@ -623,8 +668,9 @@ export default function Reports() {
           companyStats[companyName].totalItems += bill.totalItems;
 
           // Calculate total amount using Company/Guest pricing from price master
-          const companyBreakfastAmount = breakfastItems * priceMaster.company.breakfast;
-          const companyLunchAmount = lunchItems * priceMaster.company.lunch;
+          // Formula: totalAmount = (breakfastItems × company.breakfast) + (lunchItems × company.lunch)
+          const companyBreakfastAmount = breakfastItems * currentPriceMaster.company.breakfast;
+          const companyLunchAmount = lunchItems * currentPriceMaster.company.lunch;
           companyStats[companyName].totalAmount += companyBreakfastAmount + companyLunchAmount;
 
           const employeeName = bill.customerName || (bill.customerType === "guest" ? "Guest" : "Unknown");
@@ -786,8 +832,8 @@ export default function Reports() {
       }
     }
     
-    // Reload original data with users
-    await loadReportData(loadedUsers);
+    // Reload original data with users and current price master
+    await loadReportData(loadedUsers, priceMaster);
   };
 
   // Pagination helper functions
@@ -826,6 +872,9 @@ export default function Reports() {
       
       // Reset to first page
       setCurrentPage(1);
+      
+      // Reload price master to ensure we have the latest values
+      const currentPriceMaster = await loadPriceMaster();
       
       // Fetch fresh data from server
       const bills: TransactionRecord[] = await apiFetch("/transactions");
@@ -928,8 +977,10 @@ export default function Reports() {
         companyStats[companyName].breakfast += breakfastItems;
         companyStats[companyName].lunch += lunchItems;
         companyStats[companyName].totalItems += bill.totalItems;
-        const companyBreakfastAmount = breakfastItems * priceMaster.company.breakfast;
-        const companyLunchAmount = lunchItems * priceMaster.company.lunch;
+        // Calculate total amount using Company/Guest pricing from price master
+        // Formula: totalAmount = (breakfastItems × company.breakfast) + (lunchItems × company.lunch)
+        const companyBreakfastAmount = breakfastItems * currentPriceMaster.company.breakfast;
+        const companyLunchAmount = lunchItems * currentPriceMaster.company.lunch;
         companyStats[companyName].totalAmount += companyBreakfastAmount + companyLunchAmount;
         const employeeName = bill.customerName || (bill.customerType === "guest" ? "Guest" : "Unknown");
         if (!companyStats[companyName].employees.includes(employeeName)) {
@@ -1024,7 +1075,7 @@ export default function Reports() {
     } catch (err: any) {
       alert(err?.message || 'Failed to delete transaction');
       // Reload data on error to ensure consistency
-      await loadReportData();
+      await loadReportData(undefined, priceMaster);
     }
   };
 
@@ -1036,28 +1087,24 @@ export default function Reports() {
     if (activeTab === "employee") {
       dataToExport = reportData;
       headers = [
+        "Bill No",
         "Employee ID",
         "Employee Name",
         "Company",
-        "Date",
-        "Time",
-        "Breakfast",
-        "Lunch",
-        "Total Items",
+        "Billed On",
+        "Item",
         "Amount",
       ];
       fileName = "employee-report";
     } else if (activeTab === "supportStaff") {
       dataToExport = supportStaffReportData;
       headers = [
+        "Bill No",
         "Staff ID",
         "Staff Name",
         "Company",
-        "Date",
-        "Time",
-        "Breakfast",
-        "Lunch",
-        "Total Items",
+        "Billed On",
+        "Item",
         "Amount",
       ];
       fileName = "support-staff-report";
@@ -1085,32 +1132,34 @@ export default function Reports() {
     if (activeTab === "employee") {
       excelData = [
         headers,
-        ...reportData.map((record) => [
-          record.employeeId,
-          record.employeeName + (record.hasException ? ' (Obtained more)' : ''),
-          record.company,
-          record.date,
-          record.time,
-          `${record.breakfast}${record.exceptionBreakfast ? ` (${record.exceptionBreakfast} EXC)` : ''}`,
-          `${record.lunch}${record.exceptionLunch ? ` (${record.exceptionLunch} EXC)` : ''}`,
-          record.totalItems,
-          `₹${record.amount}`,
-        ]),
+        ...reportData.map((record) => {
+          const itemName = record.breakfast === 1 ? "Breakfast" : record.lunch === 1 ? "Lunch" : "";
+          return [
+            record.id,
+            record.employeeId,
+            record.employeeName + (record.hasException ? ' (Obtained more)' : ''),
+            record.company,
+            formatBilledOn(record.createdAt, record.date, record.time),
+            itemName + (record.hasException ? ' (EXC)' : ''),
+            `₹${record.amount}`,
+          ];
+        }),
       ];
     } else if (activeTab === "supportStaff") {
       excelData = [
         headers,
-        ...supportStaffReportData.map((record) => [
-          record.staffId,
-          record.staffName + (record.hasException ? ' (Obtained more)' : ''),
-          record.company,
-          record.date,
-          record.time,
-          `${record.breakfast}${record.exceptionBreakfast ? ` (${record.exceptionBreakfast} EXC)` : ''}`,
-          `${record.lunch}${record.exceptionLunch ? ` (${record.exceptionLunch} EXC)` : ''}`,
-          record.totalItems,
-          `₹${record.amount}`,
-        ]),
+        ...supportStaffReportData.map((record) => {
+          const itemName = record.breakfast === 1 ? "Breakfast" : record.lunch === 1 ? "Lunch" : "";
+          return [
+            record.id,
+            record.staffId,
+            record.staffName + (record.hasException ? ' (Obtained more)' : ''),
+            record.company,
+            formatBilledOn(record.createdAt, record.date, record.time),
+            itemName + (record.hasException ? ' (EXC)' : ''),
+            `₹${record.amount}`,
+          ];
+        }),
       ];
     } else {
       excelData = [
@@ -1369,6 +1418,12 @@ export default function Reports() {
                   <tr>
                     <th
                       className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer select-none"
+                      onClick={() => { setSortKey('id'); setSortDir(sortKey === 'id' && sortDir === 'ASC' ? 'DESC' : 'ASC'); handleGenerateReport(); }}
+                    >
+                      Bill No {sortKey === 'id' ? (sortDir === 'ASC' ? '▲' : '▼') : ''}
+                    </th>
+                    <th
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer select-none"
                       onClick={() => { setSortKey('employeeId'); setSortDir(sortKey === 'employeeId' && sortDir === 'ASC' ? 'DESC' : 'ASC'); handleGenerateReport(); }}
                     >
                       Employee ID {sortKey === 'employeeId' ? (sortDir === 'ASC' ? '▲' : '▼') : ''}
@@ -1395,24 +1450,12 @@ export default function Reports() {
                     )}
                     <th
                       className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer select-none"
-                      onClick={() => { setSortKey('date'); setSortDir(sortKey === 'date' && sortDir === 'ASC' ? 'DESC' : 'ASC'); handleGenerateReport(); }}
+                      onClick={() => { setSortKey('createdAt'); setSortDir(sortKey === 'createdAt' && sortDir === 'ASC' ? 'DESC' : 'ASC'); handleGenerateReport(); }}
                     >
-                      Date {sortKey === 'date' ? (sortDir === 'ASC' ? '▲' : '▼') : ''}
+                      Billed On {sortKey === 'createdAt' ? (sortDir === 'ASC' ? '▲' : '▼') : ''}
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Time
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Breakfast
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Lunch
-                    </th>
-                    <th
-                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer select-none"
-                      onClick={() => { setSortKey('totalItems'); setSortDir(sortKey === 'totalItems' && sortDir === 'ASC' ? 'DESC' : 'ASC'); handleGenerateReport(); }}
-                    >
-                      Total Items {sortKey === 'totalItems' ? (sortDir === 'ASC' ? '▲' : '▼') : ''}
+                      Item
                     </th>
                     <th
                       className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer select-none"
@@ -1431,7 +1474,7 @@ export default function Reports() {
                   {reportData.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={isAdmin() ? 11 : 9}
+                        colSpan={isAdmin() ? 9 : 7}
                         className="px-6 py-8 text-center text-gray-500"
                       >
                         No employee or guest report data available. Generate
@@ -1439,80 +1482,75 @@ export default function Reports() {
                       </td>
                     </tr>
                   ) : (
-                    getCurrentPageData(reportData).map((record, index) => (
-                      <tr
-                        key={record.id || index}
-                        className={`hover:bg-gray-50 ${
-                          record.isGuest ? "bg-green-50" : ""
-                        }`}
-                      >
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                          <div className="flex items-center">
-                            {record.isGuest && (
-                              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 mr-2">
-                                <i className="ri-user-add-line mr-1"></i>
-                                Guest
-                              </span>
-                            )}
-                            {record.employeeId}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          <div className="flex items-center gap-2">
-                            <span>{record.employeeName}</span>
-                            {record.hasException && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
-                                <i className="ri-error-warning-line mr-1"></i>
-                                Obtained more
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {record.company}
-                        </td>
-                        {isAdmin() && (
+                    getCurrentPageData(reportData).map((record, index) => {
+                      // Determine item name: if breakfast quantity is 1, show "Breakfast", if lunch quantity is 1, show "Lunch"
+                      const itemName = record.breakfast === 1 ? "Breakfast" : record.lunch === 1 ? "Lunch" : "";
+                      return (
+                        <tr
+                          key={record.id || index}
+                          className={`hover:bg-gray-50 ${
+                            record.isGuest ? "bg-green-50" : ""
+                          }`}
+                        >
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {record.id}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            <div className="flex items-center">
+                              {record.isGuest && (
+                                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 mr-2">
+                                  <i className="ri-user-add-line mr-1"></i>
+                                  Guest
+                                </span>
+                              )}
+                              {record.employeeId}
+                            </div>
+                          </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {record.createdBy}
+                            <div className="flex items-center gap-2">
+                              <span>{record.employeeName}</span>
+                              {record.hasException && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+                                  <i className="ri-error-warning-line mr-1"></i>
+                                  Obtained more
+                                </span>
+                              )}
+                            </div>
                           </td>
-                        )}
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {record.date}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {record.time}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {record.breakfast}
-                          {record.exceptionBreakfast ? (
-                            <span className="ml-2 text-xs text-orange-700">({record.exceptionBreakfast} EXC)</span>
-                          ) : null}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {record.lunch}
-                          {record.exceptionLunch ? (
-                            <span className="ml-2 text-xs text-orange-700">({record.exceptionLunch} EXC)</span>
-                          ) : null}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                          {record.totalItems}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          ₹{record.amount}
-                        </td>
-                        {isAdmin() && (
-                          <td className="px-6 py-4 whitespace-nowrap text-sm">
-                            <button
-                              onClick={() => handleDeleteTransaction(record.id)}
-                              className="text-red-600 hover:text-red-800 hover:bg-red-50 px-3 py-1 rounded-md transition-colors cursor-pointer"
-                              title="Delete transaction"
-                            >
-                              <i className="ri-delete-bin-line"></i>
-                            </button>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {record.company}
                           </td>
-                        )}
-                      </tr>
-                    ))
+                          {isAdmin() && (
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                              {record.createdBy}
+                            </td>
+                          )}
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {formatBilledOn(record.createdAt, record.date, record.time)}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {itemName}
+                            {record.hasException && (
+                              <span className="ml-2 text-xs text-orange-700">(EXC)</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            ₹{record.amount}
+                          </td>
+                          {isAdmin() && (
+                            <td className="px-6 py-4 whitespace-nowrap text-sm">
+                              <button
+                                onClick={() => handleDeleteTransaction(record.id)}
+                                className="text-red-600 hover:text-red-800 hover:bg-red-50 px-3 py-1 rounded-md transition-colors cursor-pointer"
+                                title="Delete transaction"
+                              >
+                                <i className="ri-delete-bin-line"></i>
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -1605,6 +1643,12 @@ export default function Reports() {
                   <tr>
                     <th
                       className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer select-none"
+                      onClick={() => { setSortKey('id'); setSortDir(sortKey === 'id' && sortDir === 'ASC' ? 'DESC' : 'ASC'); handleGenerateReport(); }}
+                    >
+                      Bill No {sortKey === 'id' ? (sortDir === 'ASC' ? '▲' : '▼') : ''}
+                    </th>
+                    <th
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer select-none"
                       onClick={() => { setSortKey('staffId'); setSortDir(sortKey === 'staffId' && sortDir === 'ASC' ? 'DESC' : 'ASC'); handleGenerateReport(); }}
                     >
                       Staff ID {sortKey === 'staffId' ? (sortDir === 'ASC' ? '▲' : '▼') : ''}
@@ -1629,23 +1673,14 @@ export default function Reports() {
                         Created By {sortKey === 'createdBy' ? (sortDir === 'ASC' ? '▲' : '▼') : ''}
                       </th>
                     )}
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Date
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Time
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Breakfast
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Lunch
-                    </th>
                     <th
                       className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer select-none"
-                      onClick={() => { setSortKey('totalItems'); setSortDir(sortKey === 'totalItems' && sortDir === 'ASC' ? 'DESC' : 'ASC'); handleGenerateReport(); }}
+                      onClick={() => { setSortKey('createdAt'); setSortDir(sortKey === 'createdAt' && sortDir === 'ASC' ? 'DESC' : 'ASC'); handleGenerateReport(); }}
                     >
-                      Total Items {sortKey === 'totalItems' ? (sortDir === 'ASC' ? '▲' : '▼') : ''}
+                      Billed On {sortKey === 'createdAt' ? (sortDir === 'ASC' ? '▲' : '▼') : ''}
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Item
                     </th>
                     <th
                       className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer select-none"
@@ -1664,7 +1699,7 @@ export default function Reports() {
                   {supportStaffReportData.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={isAdmin() ? 11 : 9}
+                        colSpan={isAdmin() ? 9 : 7}
                         className="px-6 py-8 text-center text-gray-500"
                       >
                         No support staff report data available. Generate reports
@@ -1672,67 +1707,62 @@ export default function Reports() {
                       </td>
                     </tr>
                   ) : (
-                    getCurrentPageData(supportStaffReportData).map((record, index) => (
-                      <tr key={record.id || index} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                          {record.staffId}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          <div className="flex items-center gap-2">
-                            <span>{record.staffName}</span>
-                            {record.hasException && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
-                                <i className="ri-error-warning-line mr-1"></i>
-                                Obtained more
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {record.company}
-                        </td>
-                        {isAdmin() && (
+                    getCurrentPageData(supportStaffReportData).map((record, index) => {
+                      // Determine item name: if breakfast quantity is 1, show "Breakfast", if lunch quantity is 1, show "Lunch"
+                      const itemName = record.breakfast === 1 ? "Breakfast" : record.lunch === 1 ? "Lunch" : "";
+                      return (
+                        <tr key={record.id || index} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {record.id}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {record.staffId}
+                          </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {record.createdBy}
+                            <div className="flex items-center gap-2">
+                              <span>{record.staffName}</span>
+                              {record.hasException && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+                                  <i className="ri-error-warning-line mr-1"></i>
+                                  Obtained more
+                                </span>
+                              )}
+                            </div>
                           </td>
-                        )}
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {record.date}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {record.time}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {record.breakfast}
-                          {record.exceptionBreakfast ? (
-                            <span className="ml-2 text-xs text-orange-700">({record.exceptionBreakfast} EXC)</span>
-                          ) : null}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {record.lunch}
-                          {record.exceptionLunch ? (
-                            <span className="ml-2 text-xs text-orange-700">({record.exceptionLunch} EXC)</span>
-                          ) : null}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                          {record.totalItems}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          ₹{record.amount}
-                        </td>
-                        {isAdmin() && (
-                          <td className="px-6 py-4 whitespace-nowrap text-sm">
-                            <button
-                              onClick={() => handleDeleteTransaction(record.id)}
-                              className="text-red-600 hover:text-red-800 hover:bg-red-50 px-3 py-1 rounded-md transition-colors cursor-pointer"
-                              title="Delete transaction"
-                            >
-                              <i className="ri-delete-bin-line"></i>
-                            </button>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {record.company}
                           </td>
-                        )}
-                      </tr>
-                    ))
+                          {isAdmin() && (
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                              {record.createdBy}
+                            </td>
+                          )}
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {formatBilledOn(record.createdAt, record.date, record.time)}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {itemName}
+                            {record.hasException && (
+                              <span className="ml-2 text-xs text-orange-700">(EXC)</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            ₹{record.amount}
+                          </td>
+                          {isAdmin() && (
+                            <td className="px-6 py-4 whitespace-nowrap text-sm">
+                              <button
+                                onClick={() => handleDeleteTransaction(record.id)}
+                                className="text-red-600 hover:text-red-800 hover:bg-red-50 px-3 py-1 rounded-md transition-colors cursor-pointer"
+                                title="Delete transaction"
+                              >
+                                <i className="ri-delete-bin-line"></i>
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>

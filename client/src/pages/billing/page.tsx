@@ -58,6 +58,10 @@ export default function Billing() {
 
   const loadMasterData = async () => {
     try {
+      // Load price master first to ensure menu prices are up-to-date
+      const priceMasterData = await mastersApi.getPriceMaster();
+      setPriceMaster(priceMasterData);
+
       // Load employees
       const employeeRes = await mastersApi.getEmployees({
         limit: 1000,
@@ -104,10 +108,6 @@ export default function Billing() {
           : supportRes
       ) as SupportStaff[];
       setSupportStaff(supportStaffData);
-
-      // Load price master
-      const priceMasterData = await mastersApi.getPriceMaster();
-      setPriceMaster(priceMasterData);
     } catch (error) {
       console.error("Error loading master data:", error);
       alert("Failed to load master data. Please refresh the page.");
@@ -209,7 +209,23 @@ export default function Billing() {
     return { breakfast: breakfastCount, lunch: lunchCount };
   };
 
-  const addToCart = (item: (typeof menuItems)[0]) => {
+  const addToCart = async (item: (typeof menuItems)[0]) => {
+    // First check if customer is selected
+    if (isGuest && !selectedGuest && !showAddGuest) {
+      alert("Please select a customer first");
+      return;
+    }
+
+    if (isSupportStaff && !selectedSupportStaff) {
+      alert("Please select a customer first");
+      return;
+    }
+
+    if (!isGuest && !isSupportStaff && !selectedEmployee) {
+      alert("Please select a customer first");
+      return;
+    }
+
     // Only validate for employees and support staff, not guests
     if (!isGuest) {
       let person: any = null;
@@ -234,25 +250,13 @@ export default function Billing() {
         const personId = isEmployee ? person.employeeId : person.staffId;
         const consumedToday = checkConsumption(personId, isEmployee);
 
-        // Check current cart items (non-exception items only)
-        const currentBreakfastInCart = cart
-          .filter((cartItem) => cartItem.id === "1" && !cartItem.isException)
-          .reduce((sum, cartItem) => sum + cartItem.quantity, 0);
-
-        const currentLunchInCart = cart
-          .filter((cartItem) => cartItem.id === "2" && !cartItem.isException)
-          .reduce((sum, cartItem) => sum + cartItem.quantity, 0);
-
-        // Calculate what the total would be after adding this item
+        // Check if already consumed today
         let wouldExceedLimit = false;
 
         if (item.name === "Breakfast") {
-          // For breakfast: check if total consumed today + current cart + new item would exceed 1
-          wouldExceedLimit =
-            consumedToday.breakfast + currentBreakfastInCart + 1 > 1;
+          wouldExceedLimit = consumedToday.breakfast >= 1;
         } else if (item.name === "Lunch") {
-          // For lunch: check if total consumed today + current cart + new item would exceed 1
-          wouldExceedLimit = consumedToday.lunch + currentLunchInCart + 1 > 1;
+          wouldExceedLimit = consumedToday.lunch >= 1;
         }
 
         if (wouldExceedLimit) {
@@ -269,40 +273,21 @@ export default function Billing() {
       }
     }
 
-    // Add to cart normally
-    const existingItem = cart.find(
-      (cartItem) => cartItem.id === item.id && !cartItem.isException
-    );
-    if (existingItem) {
-      setCart(
-        cart.map((cartItem) =>
-          cartItem.id === item.id && !cartItem.isException
-            ? { ...cartItem, quantity: cartItem.quantity + 1 }
-            : cartItem
-        )
-      );
-    } else {
-      setCart([...cart, { ...item, quantity: 1 }]);
-    }
+    // Set cart with only this item (quantity 1)
+    setCart([{ ...item, quantity: 1 }]);
+
+    // Automatically print the bill
+    await handlePrintBillDirect([{ ...item, quantity: 1 }]);
   };
 
-  const handleValidationConfirm = (addException: boolean) => {
+  const handleValidationConfirm = async (addException: boolean) => {
     if (addException && pendingItem) {
-      // Add to cart with exception flag
-      const existingExceptionItem = cart.find(
-        (cartItem) => cartItem.id === pendingItem.id && cartItem.isException
-      );
-      if (existingExceptionItem) {
-        setCart(
-          cart.map((cartItem) =>
-            cartItem.id === pendingItem.id && cartItem.isException
-              ? { ...cartItem, quantity: cartItem.quantity + 1 }
-              : cartItem
-          )
-        );
-      } else {
-        setCart([...cart, { ...pendingItem, quantity: 1, isException: true }]);
-      }
+      // Set cart with only this item (quantity 1) with exception flag
+      const itemWithException = { ...pendingItem, quantity: 1, isException: true };
+      setCart([itemWithException]);
+      
+      // Automatically print the bill
+      await handlePrintBillDirect([itemWithException]);
     }
 
     // Close modal and reset
@@ -311,95 +296,7 @@ export default function Billing() {
     setPendingItem(null);
   };
 
-  const updateQuantity = (id: string, quantity: number) => {
-    if (quantity === 0) {
-      setCart(cart.filter((item) => item.id !== id));
-    } else {
-      const item = cart.find((cartItem) => cartItem.id === id);
-      if (!item) return;
-
-      // Check validation when increasing quantity for employees/support staff (non-exception items only)
-      if (!isGuest && quantity > item.quantity && !item.isException) {
-        let person: any = null;
-        let personName = "";
-        let isEmployee = true;
-
-        if (isSupportStaff && selectedSupportStaff) {
-          person = supportStaff.find(
-            (staff) => staff.id.toString() === selectedSupportStaff
-          );
-          personName = person?.name || "";
-          isEmployee = false;
-        } else if (!isSupportStaff && selectedEmployee) {
-          person = employees.find(
-            (emp) => emp.id.toString() === selectedEmployee
-          );
-          personName = person?.employeeName || "";
-          isEmployee = true;
-        }
-
-        if (person) {
-          const personId = isEmployee ? person.employeeId : person.staffId;
-          const consumedToday = checkConsumption(personId, isEmployee);
-
-          // Calculate other cart items (non-exception only, excluding current item)
-          const otherBreakfastInCart = cart
-            .filter(
-              (cartItem) =>
-                cartItem.id === "1" &&
-                cartItem.id !== id &&
-                !cartItem.isException
-            )
-            .reduce((sum, cartItem) => sum + cartItem.quantity, 0);
-
-          const otherLunchInCart = cart
-            .filter(
-              (cartItem) =>
-                cartItem.id === "2" &&
-                cartItem.id !== id &&
-                !cartItem.isException
-            )
-            .reduce((sum, cartItem) => sum + cartItem.quantity, 0);
-
-          // Check if increasing quantity would exceed limit
-          let wouldExceedLimit = false;
-
-          if (item.name === "Breakfast") {
-            // For breakfast: total consumed + other cart items + new quantity should not exceed 1
-            wouldExceedLimit =
-              consumedToday.breakfast + otherBreakfastInCart + quantity > 1;
-          } else if (item.name === "Lunch") {
-            // For lunch: total consumed + other cart items + new quantity should not exceed 1
-            wouldExceedLimit =
-              consumedToday.lunch + otherLunchInCart + quantity > 1;
-          }
-
-          if (wouldExceedLimit) {
-            // Show validation modal
-            setValidationData({
-              itemName: item.name,
-              employeeName: personName,
-              consumedToday,
-            });
-            setPendingItem({
-              id: item.id,
-              name: item.name,
-              price: item.price,
-              category: item.category,
-            });
-            setShowValidationModal(true);
-            return;
-          }
-        }
-      }
-
-      setCart(
-        cart.map((cartItem) =>
-          cartItem.id === id ? { ...cartItem, quantity } : cartItem
-        )
-      );
-    }
-  };
+  // Remove updateQuantity function as quantity controls are removed
 
   const addGuest = async () => {
     if (newGuestName && guestCompanyName) {
@@ -446,8 +343,8 @@ export default function Billing() {
     }
   };
 
-  const handlePrintBill = async () => {
-    if (cart.length === 0) return;
+  const handlePrintBillDirect = async (itemsToPrint: CartItem[]) => {
+    if (itemsToPrint.length === 0) return;
 
     if (isGuest && !selectedGuest && !showAddGuest) {
       alert("Please select a guest or add a new guest");
@@ -500,17 +397,15 @@ export default function Billing() {
         employees.find((e) => e.id.toString() === selectedEmployee);
     }
 
-    cart.forEach((item) => {
-      // All customer types now use employee pricing
-      const itemPrice =
-        item.name === "Breakfast"
-          ? priceMaster.employee.breakfast
-          : priceMaster.employee.lunch;
+    // Only one item allowed - calculate for that single item
+    const item = itemsToPrint[0];
+    const itemPrice =
+      item.name === "Breakfast"
+        ? priceMaster.employee.breakfast
+        : priceMaster.employee.lunch;
+    totalAmount = itemPrice * item.quantity;
 
-      totalAmount += itemPrice * item.quantity;
-    });
-
-    // Build transaction payload for backend
+    // Build transaction payload for backend - only one item
     const billingData = {
       id: Date.now().toString(), // Temporary ID, will be replaced with DB ID
       date: new Date().toISOString().split("T")[0],
@@ -518,22 +413,19 @@ export default function Billing() {
       isGuest,
       isSupportStaff,
       customer: customerData,
-      items: cart.map((item) => ({
+      items: [{
         ...item,
         // Store the actual price used for this transaction - all use employee pricing now
-        actualPrice:
-          item.name === "Breakfast"
-            ? priceMaster.employee.breakfast
-            : priceMaster.employee.lunch,
-      })),
-      totalItems: cart.reduce((sum, item) => sum + item.quantity, 0),
+        actualPrice: itemPrice,
+      }],
+      totalItems: item.quantity,
       totalAmount,
       // Store pricing type for reports - all use employee pricing now
       pricingType: "employee",
     };
 
     try {
-      // Build payload
+      // Build payload - only one item
       const payload = {
         customerType: isGuest
           ? "guest"
@@ -553,17 +445,15 @@ export default function Billing() {
         companyName: customerData?.companyName || null,
         date: billingData.date,
         time: billingData.time,
-        items: billingData.items.map(
-          ({ id, name, quantity, isException, actualPrice }) => ({
-            id,
-            name,
-            quantity,
-            isException,
-            actualPrice,
-          })
-        ),
-        totalItems: billingData.totalItems,
-        totalAmount: billingData.totalAmount,
+        items: [{
+          id: item.id,
+          name: item.name,
+          quantity: item.quantity,
+          isException: item.isException || false,
+          actualPrice: itemPrice,
+        }],
+        totalItems: item.quantity,
+        totalAmount: totalAmount,
       };
 
       // Server-side validation (skip for guests)
@@ -646,10 +536,16 @@ export default function Billing() {
 
     const printAndCleanup = () => {
       try {
-        iframe.contentWindow.focus();
+        const contentWindow = iframe.contentWindow;
+        if (!contentWindow) {
+          cleanup();
+          return;
+        }
+        
+        contentWindow.focus();
 
         // ✅ Silent print when Chrome launched with --kiosk-printing
-        iframe.contentWindow.print();
+        contentWindow.print();
 
         // Wait briefly to ensure print is sent to printer before removing iframe
         setTimeout(cleanup, 1000);
@@ -660,7 +556,8 @@ export default function Billing() {
     };
 
     // Wait until iframe fully loads
-    if (iframe.contentDocument.readyState === "complete") {
+    const contentDoc = iframe.contentDocument;
+    if (contentDoc && contentDoc.readyState === "complete") {
       printAndCleanup();
     } else {
       iframe.onload = printAndCleanup;
@@ -682,7 +579,7 @@ export default function Billing() {
     }
 
     try {
-      // Apply exception flags to exceeded items
+      // Apply exception flags to exceeded items - only one item
       const warn = serverWarningState || {};
       const convert = (items: any[]) =>
         items.map((it: any) => {
@@ -1687,136 +1584,7 @@ export default function Billing() {
                   </div>
                 </div>
               )}
-
-              {/* Cart Items */}
-              <div className="border-t border-gray-200 pt-3">
-                <h3 className="text-xs font-semibold text-gray-700 mb-2 flex items-center">
-                  <i className="ri-shopping-bag-line mr-1"></i>
-                  Cart Items (
-                  {cart.reduce((sum, item) => sum + item.quantity, 0)})
-                </h3>
-                {cart.length === 0 ? (
-                  <div className="text-center py-4">
-                    <i className="ri-shopping-cart-line text-2xl text-gray-300 mb-2 block"></i>
-                    <p className="text-gray-500 font-medium text-xs">
-                      No items in cart
-                    </p>
-                    <p className="text-xs text-gray-400 mt-1">
-                      Add items from the menu
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {cart.map((item) => {
-                      const itemPrice =
-                        item.name === "Breakfast"
-                          ? isGuest
-                            ? priceMaster.company.breakfast
-                            : priceMaster.employee.breakfast
-                          : isGuest
-                            ? priceMaster.company.lunch
-                            : priceMaster.employee.lunch;
-
-                      return (
-                        <div
-                          key={item.id}
-                          className="flex items-center justify-between p-2 bg-gray-50 rounded-lg"
-                        >
-                          <div className="flex items-center space-x-2">
-                            <div
-                              className={`w-6 h-6 rounded-lg flex items-center justify-center ${
-                                item.name === "Breakfast"
-                                  ? "bg-orange-100"
-                                  : "bg-green-100"
-                              }`}
-                            >
-                              <i
-                                className={`text-xs ${
-                                  item.name === "Breakfast"
-                                    ? "ri-restaurant-line text-orange-600"
-                                    : "ri-bowl-line text-green-600"
-                                }`}
-                              ></i>
-                            </div>
-                            <div>
-                              <div className="flex items-center">
-                                <h4 className="font-medium text-gray-900 text-xs">
-                                  {item.name}
-                                </h4>
-                                {item.isException && (
-                                  <span className="ml-2 px-1.5 py-0.5 text-xs bg-orange-100 text-orange-800 rounded-full font-medium">
-                                    Exception
-                                  </span>
-                                )}
-                              </div>
-                              <p className="text-gray-600 text-xs">
-                                ₹{itemPrice} each
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex items-center space-x-1">
-                            <button
-                              onClick={() =>
-                                updateQuantity(item.id, item.quantity - 1)
-                              }
-                              className="w-6 h-6 bg-white border border-gray-300 rounded-lg flex items-center justify-center hover:bg-gray-100 cursor-pointer transition-colors"
-                            >
-                              <i className="ri-subtract-line text-xs"></i>
-                            </button>
-                            <span className="w-6 text-center font-semibold text-xs">
-                              {item.quantity}
-                            </span>
-                            <button
-                              onClick={() =>
-                                updateQuantity(item.id, item.quantity + 1)
-                              }
-                              className="w-6 h-6 bg-white border border-gray-300 rounded-lg flex items-center justify-center hover:bg-gray-100 cursor-pointer transition-colors"
-                            >
-                              <i className="ri-add-line text-xs"></i>
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
             </div>
-
-            {/* Print Button - Fixed at bottom */}
-            {cart.length > 0 && (
-              <div className="border-t border-gray-200 p-3 flex-shrink-0">
-                <div className="bg-gray-50 rounded-lg p-2 mb-2">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-gray-600">Total Items:</span>
-                    <span className="font-semibold">
-                      {cart.reduce((sum, item) => sum + item.quantity, 0)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center text-sm font-bold mt-1">
-                    <span>Total Amount:</span>
-                    <span className="text-green-600">
-                      ₹
-                      {cart.reduce((sum, item) => {
-                        // All customer types now use employee pricing
-                        const itemPrice =
-                          item.name === "Breakfast"
-                            ? priceMaster.employee.breakfast
-                            : priceMaster.employee.lunch;
-                        return sum + itemPrice * item.quantity;
-                      }, 0)}
-                    </span>
-                  </div>
-                </div>
-                <button
-                  onClick={handlePrintBill}
-                  className="w-full bg-gradient-to-r from-blue-600 to-blue-700 text-white py-2 rounded-lg font-semibold hover:from-blue-700 hover:to-blue-800 transition-all cursor-pointer whitespace-nowrap flex items-center justify-center shadow-lg hover:shadow-xl text-sm"
-                >
-                  <i className="ri-printer-line mr-2"></i>
-                  Print Bill
-                </button>
-              </div>
-            )}
           </div>
         </div>
       </div>
