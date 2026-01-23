@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Layout from "../../components/feature/Layout";
 import { apiFetch, mastersApi } from "../../api/client";
 
@@ -7,7 +7,6 @@ export default function Billing() {
   const [selectedEmployee, setSelectedEmployee] = useState("");
   const [selectedEmployeeObj, setSelectedEmployeeObj] =
     useState<Employee | null>(null);
-  const [employeeSearch, setEmployeeSearch] = useState("");
   const [guests, setGuests] = useState<Guest[]>([]);
   const [allGuests, setAllGuests] = useState<Guest[]>([]); // Store all guests for filtering
   const [selectedGuest, setSelectedGuest] = useState("");
@@ -17,14 +16,15 @@ export default function Billing() {
   const [isGuest, setIsGuest] = useState(false);
   const [isSupportStaff, setIsSupportStaff] = useState(false);
   const [showAddGuest, setShowAddGuest] = useState(false);
-  const [guestSearch, setGuestSearch] = useState("");
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [supportStaff, setSupportStaff] = useState<SupportStaff[]>([]);
   const [selectedSupportStaff, setSelectedSupportStaff] = useState("");
   const [selectedSupportStaffObj, setSelectedSupportStaffObj] =
     useState<SupportStaff | null>(null);
-  const [supportStaffSearch, setSupportStaffSearch] = useState("");
-  const [showAddSupportStaff, setShowAddSupportStaff] = useState(false);
+  // Unified search state
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
+  const [addCustomerType, setAddCustomerType] = useState<"employee" | "supportStaff" | "guest">("guest");
   const [newSupportStaffName, setNewSupportStaffName] = useState("");
   const [newSupportStaffId, setNewSupportStaffId] = useState("");
   const [newSupportStaffDesignation, setNewSupportStaffDesignation] =
@@ -114,41 +114,79 @@ export default function Billing() {
     }
   };
 
-  // Debounced server-side search for employees
-  useEffect(() => {
-    const handle = setTimeout(async () => {
-      try {
-        const res = await mastersApi.getEmployees({
-          q: employeeSearch,
-          limit: 50,
-          sortBy: "employeeName",
-        });
-        const list = (
-          Array.isArray((res as any)?.data) ? (res as any).data : res
-        ) as Employee[];
-        setEmployees(list);
-      } catch (e) {}
-    }, 300);
-    return () => clearTimeout(handle);
-  }, [employeeSearch]);
+  // Extract employee ID from URL (e.g., https://contacts.dev.refex.group/vcard/VRPL025062)
+  const extractEmployeeIdFromUrl = (searchText: string): string | null => {
+    const urlPattern = /\/vcard\/([A-Z0-9]+)/i;
+    const match = searchText.match(urlPattern);
+    return match ? match[1] : null;
+  };
 
-  // Debounced server-side search for support staff
+  // Unified search - debounced server-side search for all customer types
   useEffect(() => {
     const handle = setTimeout(async () => {
+      if (!customerSearch.trim()) {
+        // If search is empty, load all data
+        try {
+          const [employeeRes, supportRes] = await Promise.all([
+            mastersApi.getEmployees({
+              limit: 1000,
+              sortBy: "employeeName",
+            }),
+            mastersApi.getSupportStaff({
+              limit: 1000,
+              sortBy: "name",
+            }),
+          ]);
+          const employeeData = (
+            Array.isArray((employeeRes as any)?.data)
+              ? (employeeRes as any).data
+              : employeeRes
+          ) as Employee[];
+          const supportStaffData = (
+            Array.isArray((supportRes as any)?.data)
+              ? (supportRes as any).data
+              : supportRes
+          ) as SupportStaff[];
+          setEmployees(employeeData);
+          setSupportStaff(supportStaffData);
+        } catch (e) {}
+        return;
+      }
+
+      // Extract employee ID from URL if present
+      const extractedId = extractEmployeeIdFromUrl(customerSearch);
+      const searchQuery = extractedId || customerSearch;
+
       try {
-        const res = await mastersApi.getSupportStaff({
-          q: supportStaffSearch,
-          limit: 50,
-          sortBy: "name",
-        });
-        const list = (
-          Array.isArray((res as any)?.data) ? (res as any).data : res
+        // Search employees and support staff in parallel
+        const [employeeRes, supportRes] = await Promise.all([
+          mastersApi.getEmployees({
+            q: searchQuery,
+            limit: 50,
+            sortBy: "employeeName",
+          }),
+          mastersApi.getSupportStaff({
+            q: searchQuery,
+            limit: 50,
+            sortBy: "name",
+          }),
+        ]);
+        const employeeList = (
+          Array.isArray((employeeRes as any)?.data)
+            ? (employeeRes as any).data
+            : employeeRes
+        ) as Employee[];
+        const supportStaffList = (
+          Array.isArray((supportRes as any)?.data)
+            ? (supportRes as any).data
+            : supportRes
         ) as SupportStaff[];
-        setSupportStaff(list);
+        setEmployees(employeeList);
+        setSupportStaff(supportStaffList);
       } catch (e) {}
     }, 300);
     return () => clearTimeout(handle);
-  }, [supportStaffSearch]);
+  }, [customerSearch]);
 
   // Note: Removed server-side search for guests - using client-side filtering instead
   // This ensures dropdown always shows all guests while search filters client-side
@@ -158,24 +196,135 @@ export default function Billing() {
     { id: "2", name: "Lunch", price: 0, category: "Lunch" },
   ];
 
-  const filteredEmployees = employees.filter(
-    (emp) =>
-      emp.employeeName.toLowerCase().includes(employeeSearch.toLowerCase()) ||
-      emp.employeeId.toLowerCase().includes(employeeSearch.toLowerCase())
-  );
+  // Unified filtering for all customer types
+  const getFilteredCustomers = () => {
+    if (!customerSearch.trim()) {
+      return {
+        employees: [],
+        supportStaff: [],
+        guests: [],
+      };
+    }
 
-  const filteredSupportStaff = supportStaff.filter(
-    (staff) =>
-      staff.name.toLowerCase().includes(supportStaffSearch.toLowerCase()) ||
-      staff.staffId.toLowerCase().includes(supportStaffSearch.toLowerCase())
-  );
+    // Extract employee ID from URL if present
+    const extractedId = extractEmployeeIdFromUrl(customerSearch);
+    const searchLower = (extractedId || customerSearch).toLowerCase();
 
-  // Filter guests based on search (using allGuests for client-side filtering)
-  const filteredGuests = allGuests.filter(
-    (guest) =>
-      guest.name.toLowerCase().includes(guestSearch.toLowerCase()) ||
-      guest.companyName.toLowerCase().includes(guestSearch.toLowerCase())
-  );
+    const filteredEmployees = employees.filter(
+      (emp) =>
+        emp.employeeName.toLowerCase().includes(searchLower) ||
+        emp.employeeId.toLowerCase().includes(searchLower) ||
+        emp.companyName?.toLowerCase().includes(searchLower)
+    );
+
+    const filteredSupportStaff = supportStaff.filter(
+      (staff) =>
+        staff.name.toLowerCase().includes(searchLower) ||
+        staff.staffId.toLowerCase().includes(searchLower) ||
+        staff.designation?.toLowerCase().includes(searchLower) ||
+        staff.companyName?.toLowerCase().includes(searchLower)
+    );
+
+    const filteredGuests = allGuests.filter(
+      (guest) =>
+        guest.name.toLowerCase().includes(searchLower) ||
+        guest.companyName.toLowerCase().includes(searchLower)
+    );
+
+    return {
+      employees: filteredEmployees,
+      supportStaff: filteredSupportStaff,
+      guests: filteredGuests,
+    };
+  };
+
+  const filteredCustomers = getFilteredCustomers();
+
+  // Handle customer selection from unified search
+  const handleCustomerSelect = useCallback((
+    type: "employee" | "supportStaff" | "guest",
+    id: string,
+    obj: Employee | SupportStaff | Guest
+  ) => {
+    // Clear all selections first
+    setSelectedEmployee("");
+    setSelectedEmployeeObj(null);
+    setSelectedSupportStaff("");
+    setSelectedSupportStaffObj(null);
+    setSelectedGuest("");
+    setSelectedGuestObj(null);
+    setIsGuest(false);
+    setIsSupportStaff(false);
+
+    // Set the selected customer
+    if (type === "employee") {
+      setSelectedEmployee(id);
+      setSelectedEmployeeObj(obj as Employee);
+      setIsGuest(false);
+      setIsSupportStaff(false);
+      setCustomerSearch(`${(obj as Employee).employeeName} (${(obj as Employee).employeeId})`);
+    } else if (type === "supportStaff") {
+      setSelectedSupportStaff(id);
+      setSelectedSupportStaffObj(obj as SupportStaff);
+      setIsGuest(false);
+      setIsSupportStaff(true);
+      setCustomerSearch(`${(obj as SupportStaff).name} (${(obj as SupportStaff).staffId})`);
+    } else if (type === "guest") {
+      setSelectedGuest(id);
+      setSelectedGuestObj(obj as Guest);
+      setIsGuest(true);
+      setIsSupportStaff(false);
+      setCustomerSearch(`${(obj as Guest).name} - ${(obj as Guest).companyName}`);
+    }
+  }, []);
+
+  // Clear selection when search field is cleared
+  useEffect(() => {
+    if (!customerSearch.trim() && (selectedEmployee || selectedSupportStaff || selectedGuest)) {
+      setSelectedEmployee("");
+      setSelectedEmployeeObj(null);
+      setSelectedSupportStaff("");
+      setSelectedSupportStaffObj(null);
+      setSelectedGuest("");
+      setSelectedGuestObj(null);
+      setIsGuest(false);
+      setIsSupportStaff(false);
+    }
+  }, [customerSearch, selectedEmployee, selectedSupportStaff, selectedGuest]);
+
+  // Auto-select customer if URL is pasted and only one result is found
+  useEffect(() => {
+    // Only auto-select if:
+    // 1. Search is not empty
+    // 2. It's a URL (contains /vcard/)
+    // 3. No customer is currently selected
+    // 4. There's exactly one result total across all types
+    const isUrl = customerSearch.includes("/vcard/");
+    const totalResults = 
+      filteredCustomers.employees.length +
+      filteredCustomers.supportStaff.length +
+      filteredCustomers.guests.length;
+    const hasSelection = selectedEmployee || selectedSupportStaff || selectedGuest;
+
+    if (
+      customerSearch.trim() &&
+      isUrl &&
+      !hasSelection &&
+      totalResults === 1
+    ) {
+      // Auto-select the single result
+      if (filteredCustomers.employees.length === 1) {
+        const emp = filteredCustomers.employees[0];
+        handleCustomerSelect("employee", emp.id.toString(), emp);
+      } else if (filteredCustomers.supportStaff.length === 1) {
+        const staff = filteredCustomers.supportStaff[0];
+        handleCustomerSelect("supportStaff", staff.id.toString(), staff);
+      } else if (filteredCustomers.guests.length === 1) {
+        const guest = filteredCustomers.guests[0];
+        handleCustomerSelect("guest", guest.id.toString(), guest);
+      }
+    }
+  }, [filteredCustomers, customerSearch, selectedEmployee, selectedSupportStaff, selectedGuest, handleCustomerSelect]);
 
   // Check if employee/support staff has already consumed meals today
   const checkConsumption = (personId: string, isEmployee: boolean = true) => {
@@ -211,17 +360,7 @@ export default function Billing() {
 
   const addToCart = async (item: (typeof menuItems)[0]) => {
     // First check if customer is selected
-    if (isGuest && !selectedGuest && !showAddGuest) {
-      alert("Please select a customer first");
-      return;
-    }
-
-    if (isSupportStaff && !selectedSupportStaff) {
-      alert("Please select a customer first");
-      return;
-    }
-
-    if (!isGuest && !isSupportStaff && !selectedEmployee) {
+    if (!selectedEmployee && !selectedSupportStaff && !selectedGuest) {
       alert("Please select a customer first");
       return;
     }
@@ -307,12 +446,10 @@ export default function Billing() {
         });
         setGuests([...guests, newGuest]);
         setAllGuests([...allGuests, newGuest]); // Also update allGuests
-        setSelectedGuest(newGuest.id.toString());
-        setSelectedGuestObj(newGuest);
+        handleCustomerSelect("guest", newGuest.id.toString(), newGuest);
         setNewGuestName("");
         setGuestCompanyName("");
         setShowAddGuest(false);
-        setGuestSearch(`${newGuest.name} - ${newGuest.companyName}`);
       } catch (error: any) {
         console.error("Error creating guest:", error);
         alert(error.message || "Failed to create guest");
@@ -330,12 +467,11 @@ export default function Billing() {
           companyName: newSupportStaffCompany,
         });
         setSupportStaff([...supportStaff, newStaff]);
-        setSelectedSupportStaff(newStaff.id.toString());
+        handleCustomerSelect("supportStaff", newStaff.id.toString(), newStaff);
         setNewSupportStaffName("");
         setNewSupportStaffId("");
         setNewSupportStaffDesignation("");
         setNewSupportStaffCompany("");
-        setShowAddSupportStaff(false);
       } catch (error: any) {
         console.error("Error creating support staff:", error);
         alert(error.message || "Failed to create support staff");
@@ -501,8 +637,9 @@ export default function Billing() {
     setSelectedGuestObj(null);
     setSelectedSupportStaff("");
     setSelectedSupportStaffObj(null);
-    setEmployeeSearch("");
-    setSupportStaffSearch("");
+    setCustomerSearch("");
+    setIsGuest(false);
+    setIsSupportStaff(false);
   };
 
   const printReceipt = async (html: any, _billingData: any) => {
@@ -618,8 +755,9 @@ export default function Billing() {
       setSelectedGuestObj(null);
       setSelectedSupportStaff("");
       setSelectedSupportStaffObj(null);
-      setEmployeeSearch("");
-      setSupportStaffSearch("");
+      setCustomerSearch("");
+      setIsGuest(false);
+      setIsSupportStaff(false);
     } catch (err: any) {
       setShowSubmitExceptionModal(false);
       alert(err?.message || "Failed to save transaction");
@@ -720,15 +858,15 @@ export default function Billing() {
   };
 
   const getSelectedPersonName = () => {
-    if (isGuest) {
+    if (selectedGuest) {
       const guest = allGuests.find((g) => g.id.toString() === selectedGuest);
       return guest ? `${guest.name} (${guest.companyName})` : "";
-    } else if (isSupportStaff) {
+    } else if (selectedSupportStaff) {
       const staff = supportStaff.find(
         (s) => s.id.toString() === selectedSupportStaff
       );
       return staff ? `${staff.name} (${staff.staffId})` : "";
-    } else {
+    } else if (selectedEmployee) {
       const employee = employees.find(
         (e) => e.id.toString() === selectedEmployee
       );
@@ -736,6 +874,7 @@ export default function Billing() {
         ? `${employee.employeeName} (${employee.employeeId})`
         : "";
     }
+    return "";
   };
 
   return (
@@ -893,6 +1032,238 @@ export default function Billing() {
           </div>
         )}
 
+        {/* Add Customer Modal */}
+        {showAddCustomerModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+              <div className="p-6 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xl font-semibold text-gray-900 flex items-center">
+                    <i className="ri-user-add-line mr-2"></i>
+                    Add Customer
+                  </h2>
+                  <button
+                    onClick={() => {
+                      setShowAddCustomerModal(false);
+                      setAddCustomerType("guest");
+                      setNewGuestName("");
+                      setGuestCompanyName("");
+                      setNewSupportStaffName("");
+                      setNewSupportStaffId("");
+                      setNewSupportStaffDesignation("");
+                      setNewSupportStaffCompany("");
+                    }}
+                    className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"
+                  >
+                    <i className="ri-close-line text-xl"></i>
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6">
+                {/* Customer Type Selection */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Customer Type
+                  </label>
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={() => setAddCustomerType("guest")}
+                      className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer transition-all ${
+                        addCustomerType === "guest"
+                          ? "bg-green-600 text-white"
+                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      }`}
+                    >
+                      <i className="ri-user-add-line mr-1"></i>
+                      Guest
+                    </button>
+                    <button
+                      onClick={() => setAddCustomerType("supportStaff")}
+                      className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer transition-all ${
+                        addCustomerType === "supportStaff"
+                          ? "bg-purple-600 text-white"
+                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      }`}
+                    >
+                      <i className="ri-tools-line mr-1"></i>
+                      Support Staff
+                    </button>
+                  </div>
+                </div>
+
+                {/* Guest Form */}
+                {addCustomerType === "guest" && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-600 mb-1">
+                        Guest Name
+                      </label>
+                      <input
+                        type="text"
+                        value={newGuestName}
+                        onChange={(e) => setNewGuestName(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                        placeholder="Enter guest name"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-600 mb-1">
+                        Company Name
+                      </label>
+                      {companyNames.length > 0 ? (
+                        <div className="relative">
+                          <select
+                            value={guestCompanyName}
+                            onChange={(e) => setGuestCompanyName(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none pr-8 appearance-none"
+                          >
+                            <option value="">Select company...</option>
+                            {companyNames.map((company, index) => (
+                              <option key={index} value={company}>
+                                {company}
+                              </option>
+                            ))}
+                          </select>
+                          <i className="ri-arrow-down-s-line absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none"></i>
+                        </div>
+                      ) : (
+                        <input
+                          type="text"
+                          value={guestCompanyName}
+                          onChange={(e) => setGuestCompanyName(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                          placeholder="Enter company name"
+                        />
+                      )}
+                    </div>
+                    <div className="flex space-x-3 pt-2">
+                      <button
+                        onClick={() => {
+                          setShowAddCustomerModal(false);
+                          setNewGuestName("");
+                          setGuestCompanyName("");
+                        }}
+                        className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 cursor-pointer font-medium transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={async () => {
+                          await addGuest();
+                          setShowAddCustomerModal(false);
+                        }}
+                        className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 cursor-pointer font-medium transition-colors"
+                      >
+                        <i className="ri-add-line mr-1"></i>
+                        Add Guest
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Support Staff Form */}
+                {addCustomerType === "supportStaff" && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-600 mb-1">
+                        Staff ID
+                      </label>
+                      <input
+                        type="text"
+                        value={newSupportStaffId}
+                        onChange={(e) => setNewSupportStaffId(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
+                        placeholder="Enter staff ID"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-600 mb-1">
+                        Staff Name
+                      </label>
+                      <input
+                        type="text"
+                        value={newSupportStaffName}
+                        onChange={(e) => setNewSupportStaffName(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
+                        placeholder="Enter staff name"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-600 mb-1">
+                        Designation
+                      </label>
+                      <select
+                        value={newSupportStaffDesignation}
+                        onChange={(e) => setNewSupportStaffDesignation(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none pr-8 appearance-none"
+                      >
+                        <option value="">Select designation...</option>
+                        <option value="Driver">Driver</option>
+                        <option value="Office Assistant">Office Assistant</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-600 mb-1">
+                        Company Name
+                      </label>
+                      {companyNames.length > 0 ? (
+                        <div className="relative">
+                          <select
+                            value={newSupportStaffCompany}
+                            onChange={(e) => setNewSupportStaffCompany(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none pr-8 appearance-none"
+                          >
+                            <option value="">Select company...</option>
+                            {companyNames.map((company, index) => (
+                              <option key={index} value={company}>
+                                {company}
+                              </option>
+                            ))}
+                          </select>
+                          <i className="ri-arrow-down-s-line absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none"></i>
+                        </div>
+                      ) : (
+                        <input
+                          type="text"
+                          value={newSupportStaffCompany}
+                          onChange={(e) => setNewSupportStaffCompany(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
+                          placeholder="Enter company name"
+                        />
+                      )}
+                    </div>
+                    <div className="flex space-x-3 pt-2">
+                      <button
+                        onClick={() => {
+                          setShowAddCustomerModal(false);
+                          setNewSupportStaffName("");
+                          setNewSupportStaffId("");
+                          setNewSupportStaffDesignation("");
+                          setNewSupportStaffCompany("");
+                        }}
+                        className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 cursor-pointer font-medium transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={async () => {
+                          await addSupportStaff();
+                          setShowAddCustomerModal(false);
+                        }}
+                        className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 cursor-pointer font-medium transition-colors"
+                      >
+                        <i className="ri-add-line mr-1"></i>
+                        Add Staff
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 h-full">
           {/* Menu Items - Fixed Height Container */}
           <div className="xl:col-span-2 flex flex-col h-full">
@@ -903,50 +1274,6 @@ export default function Billing() {
                 <p className="text-gray-600 text-sm">
                   Select items and process orders
                 </p>
-              </div>
-              <div className="flex space-x-2">
-                <button
-                  onClick={() => {
-                    setIsGuest(false);
-                    setIsSupportStaff(false);
-                  }}
-                  className={`px-3 py-2 rounded-lg text-sm font-medium cursor-pointer whitespace-nowrap transition-all ${
-                    !isGuest && !isSupportStaff
-                      ? "bg-blue-600 text-white shadow-sm"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  }`}
-                >
-                  <i className="ri-user-line mr-1"></i>
-                  Employee
-                </button>
-                <button
-                  onClick={() => {
-                    setIsGuest(false);
-                    setIsSupportStaff(true);
-                  }}
-                  className={`px-3 py-2 rounded-lg text-sm font-medium cursor-pointer whitespace-nowrap transition-all ${
-                    isSupportStaff
-                      ? "bg-purple-600 text-white shadow-sm"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  }`}
-                >
-                  <i className="ri-tools-line mr-1"></i>
-                  Support Staff
-                </button>
-                <button
-                  onClick={() => {
-                    setIsGuest(true);
-                    setIsSupportStaff(false);
-                  }}
-                  className={`px-3 py-2 rounded-lg text-sm font-medium cursor-pointer whitespace-nowrap transition-all ${
-                    isGuest
-                      ? "bg-green-600 text-white shadow-sm"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  }`}
-                >
-                  <i className="ri-user-add-line mr-1"></i>
-                  Guest
-                </button>
               </div>
             </div>
 
@@ -1029,561 +1356,219 @@ export default function Billing() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-3 space-y-3">
-              {/* Customer Selection */}
-              {!isGuest && !isSupportStaff ? (
-                // Employee Selection
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-2">
+              {/* Unified Customer Search */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-xs font-semibold text-gray-700">
                     <i className="ri-search-line mr-1"></i>
-                    Search Employee
+                    Search Customer
                   </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={employeeSearch}
-                      onChange={(e) => setEmployeeSearch(e.target.value)}
-                      className="w-full px-3 py-2 pl-8 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm"
-                      placeholder="Search by name or ID..."
-                    />
-                    <i className="ri-search-line absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-sm"></i>
-                  </div>
+                  <button
+                    onClick={() => setShowAddCustomerModal(true)}
+                    className="text-blue-600 hover:text-blue-700 text-xs font-medium cursor-pointer hover:bg-blue-50 px-2 py-1 rounded-lg transition-colors flex items-center"
+                  >
+                    <i className="ri-add-line mr-1"></i>
+                    Add Customer
+                  </button>
+                </div>
 
-                  {/* Show selected employee */}
-                  {selectedEmployee && (
-                    <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center">
-                          <div className="w-6 h-6 bg-blue-500 rounded-lg flex items-center justify-center mr-2">
-                            <i className="ri-user-line text-white text-xs"></i>
-                          </div>
-                          <div>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={customerSearch}
+                    onChange={(e) => setCustomerSearch(e.target.value)}
+                    className="w-full px-3 py-2 pl-8 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm"
+                    placeholder="Search by ID, Name or Scan QR Code"
+                  />
+                  <i className="ri-search-line absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-sm"></i>
+                </div>
+
+                {/* Show selected customer */}
+                {(selectedEmployee || selectedSupportStaff || selectedGuest) && (
+                  <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center">
+                        <div className={`w-6 h-6 rounded-lg flex items-center justify-center mr-2 ${
+                          selectedEmployee ? "bg-blue-500" :
+                          selectedSupportStaff ? "bg-purple-500" :
+                          "bg-green-500"
+                        }`}>
+                          <i className={`text-white text-xs ${
+                            selectedEmployee ? "ri-user-line" :
+                            selectedSupportStaff ? "ri-tools-line" :
+                            "ri-user-add-line"
+                          }`}></i>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold text-blue-900">
+                            Selected {selectedEmployee ? "Employee" : selectedSupportStaff ? "Support Staff" : "Guest"}
+                          </p>
+                          <p className="text-xs text-blue-700">
+                            {getSelectedPersonName()}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setSelectedEmployee("");
+                          setSelectedEmployeeObj(null);
+                          setSelectedSupportStaff("");
+                          setSelectedSupportStaffObj(null);
+                          setSelectedGuest("");
+                          setSelectedGuestObj(null);
+                          setCustomerSearch("");
+                          setIsGuest(false);
+                          setIsSupportStaff(false);
+                        }}
+                        className="text-blue-600 hover:text-blue-800 cursor-pointer p-1 hover:bg-blue-100 rounded-lg transition-colors"
+                      >
+                        <i className="ri-close-line text-xs"></i>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Unified search results - grouped by type */}
+                {customerSearch &&
+                  !selectedEmployee &&
+                  !selectedSupportStaff &&
+                  !selectedGuest &&
+                  (filteredCustomers.employees.length > 0 ||
+                    filteredCustomers.supportStaff.length > 0 ||
+                    filteredCustomers.guests.length > 0) && (
+                    <div className="mt-2 max-h-96 overflow-y-auto border border-gray-200 rounded-lg bg-white shadow-lg">
+                      {/* Employees Section */}
+                      {filteredCustomers.employees.length > 0 && (
+                        <div>
+                          <div className="px-3 py-2 bg-blue-50 border-b border-blue-200 sticky top-0">
                             <p className="text-xs font-semibold text-blue-900">
-                              Selected Employee
-                            </p>
-                            <p className="text-xs text-blue-700">
-                              {getSelectedPersonName()}
+                              Employees:
                             </p>
                           </div>
-                        </div>
-                        <button
-                          onClick={() => {
-                            setSelectedEmployee("");
-                            setEmployeeSearch("");
-                          }}
-                          className="text-blue-600 hover:text-blue-800 cursor-pointer p-1 hover:bg-blue-100 rounded-lg transition-colors"
-                        >
-                          <i className="ri-close-line text-xs"></i>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Employee search results */}
-                  {employeeSearch &&
-                    !selectedEmployee &&
-                    filteredEmployees.length > 0 && (
-                      <div className="mt-2 max-h-48 overflow-y-auto border border-gray-200 rounded-lg bg-white shadow-lg">
-                        {filteredEmployees.map((emp) => (
-                          <button
-                            key={emp.id}
-                            onClick={() => {
-                              setSelectedEmployee(emp.id.toString());
-                              setSelectedEmployeeObj(emp);
-                              setEmployeeSearch(
-                                `${emp.employeeName} (${emp.employeeId})`
-                              );
-                            }}
-                            className="w-full px-2 py-2 text-left hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0 transition-colors"
-                          >
-                            <div className="flex items-center space-x-2">
-                              {emp.qrCode ? (
-                                <div className="w-7 h-7 border border-gray-300 rounded-lg overflow-hidden">
-                                  <img
-                                    src={emp.qrCode}
-                                    alt="QR"
-                                    className="w-full h-full object-cover"
-                                  />
-                                </div>
-                              ) : (
-                                <div className="w-7 h-7 bg-gray-100 rounded-lg flex items-center justify-center">
-                                  <i className="ri-qr-code-line text-gray-500 text-xs"></i>
-                                </div>
-                              )}
-                              <div className="flex-1 min-w-0">
-                                <div className="font-medium text-gray-900 truncate text-xs">
-                                  {emp.employeeName}
-                                </div>
-                                <div className="text-xs text-gray-500 truncate">
-                                  {emp.employeeId} •{" "}
-                                  {emp.companyName || "No Company"}
-                                </div>
-                              </div>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                  {employeeSearch &&
-                    !selectedEmployee &&
-                    filteredEmployees.length === 0 &&
-                    employees.length > 0 && (
-                      <div className="mt-2 p-2 text-center text-gray-500 border border-gray-200 rounded-lg bg-gray-50">
-                        <i className="ri-search-line text-lg mb-1 block"></i>
-                        <p className="text-xs">
-                          No employees found matching "{employeeSearch}"
-                        </p>
-                      </div>
-                    )}
-
-                  {employees.length === 0 && !selectedEmployee && (
-                    <div className="mt-2 p-2 text-center text-gray-500 border border-gray-200 rounded-lg bg-gray-50">
-                      <i className="ri-user-add-line text-lg mb-1 block"></i>
-                      <p className="text-xs">No employees available</p>
-                      <p className="text-xs text-gray-400 mt-1">
-                        Please add employees in Master Data first
-                      </p>
-                    </div>
-                  )}
-                </div>
-              ) : isSupportStaff ? (
-                // Support Staff Selection
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="block text-xs font-semibold text-gray-700">
-                      <i className="ri-tools-line mr-1"></i>
-                      Search Support Staff
-                    </label>
-                    <button
-                      onClick={() =>
-                        setShowAddSupportStaff(!showAddSupportStaff)
-                      }
-                      className="text-purple-600 hover:text-purple-700 text-xs font-medium cursor-pointer hover:bg-purple-50 px-2 py-1 rounded-lg transition-colors"
-                    >
-                      <i className="ri-add-line mr-1"></i>
-                      Add New
-                    </button>
-                  </div>
-
-                  {showAddSupportStaff && (
-                    <div className="space-y-2 p-2 bg-purple-50 rounded-lg border border-purple-200 mb-3">
-                      <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                          Staff ID
-                        </label>
-                        <input
-                          type="text"
-                          value={newSupportStaffId}
-                          onChange={(e) => setNewSupportStaffId(e.target.value)}
-                          className="w-full px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-xs"
-                          placeholder="Enter staff ID"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                          Staff Name
-                        </label>
-                        <input
-                          type="text"
-                          value={newSupportStaffName}
-                          onChange={(e) =>
-                            setNewSupportStaffName(e.target.value)
-                          }
-                          className="w-full px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-xs"
-                          placeholder="Enter staff name"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                          Designation
-                        </label>
-                        <select
-                          value={newSupportStaffDesignation}
-                          onChange={(e) =>
-                            setNewSupportStaffDesignation(e.target.value)
-                          }
-                          className="w-full px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none pr-6 appearance-none text-xs"
-                        >
-                          <option value="">Select designation...</option>
-                          <option value="Driver">Driver</option>
-                          <option value="Office Assistant">
-                            Office Assistant
-                          </option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                          Company Name
-                        </label>
-                        {companyNames.length > 0 ? (
-                          <div className="relative">
-                            <select
-                              value={newSupportStaffCompany}
-                              onChange={(e) =>
-                                setNewSupportStaffCompany(e.target.value)
+                          {filteredCustomers.employees.map((emp) => (
+                            <button
+                              key={emp.id}
+                              onClick={() =>
+                                handleCustomerSelect("employee", emp.id.toString(), emp)
                               }
-                              className="w-full px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none pr-6 appearance-none text-xs"
+                              className="w-full px-2 py-2 text-left hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0 transition-colors"
                             >
-                              <option value="">Select company...</option>
-                              {companyNames.map((company, index) => (
-                                <option key={index} value={company}>
-                                  {company}
-                                </option>
-                              ))}
-                            </select>
-                            <i className="ri-arrow-down-s-line absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none text-xs"></i>
-                          </div>
-                        ) : (
-                          <input
-                            type="text"
-                            value={newSupportStaffCompany}
-                            onChange={(e) =>
-                              setNewSupportStaffCompany(e.target.value)
-                            }
-                            className="w-full px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-xs"
-                            placeholder="Enter company name"
-                          />
-                        )}
-                      </div>
-
-                      <div className="flex space-x-2">
-                        <button
-                          onClick={addSupportStaff}
-                          className="px-2 py-2 bg-purple-600 text-white rounded-lg text-xs hover:bg-purple-700 cursor-pointer whitespace-nowrap flex-1 font-medium transition-colors"
-                        >
-                          <i className="ri-add-line mr-1"></i>
-                          Add Staff
-                        </button>
-                        <button
-                          onClick={() => setShowAddSupportStaff(false)}
-                          className="px-2 py-2 bg-gray-300 text-gray-700 rounded-lg text-xs hover:bg-gray-400 cursor-pointer whitespace-nowrap flex-1 font-medium transition-colors"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={supportStaffSearch}
-                      onChange={(e) => setSupportStaffSearch(e.target.value)}
-                      className="w-full px-3 py-2 pl-8 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all text-sm"
-                      placeholder="Search by name or ID..."
-                    />
-                    <i className="ri-search-line absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-sm"></i>
-                  </div>
-
-                  {/* Show selected support staff */}
-                  {selectedSupportStaff && (
-                    <div className="mt-2 p-2 bg-purple-50 border border-purple-200 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center">
-                          <div className="w-6 h-6 bg-purple-500 rounded-lg flex items-center justify-center mr-2">
-                            <i className="ri-tools-line text-white text-xs"></i>
-                          </div>
-                          <div>
-                            <p className="text-xs font-semibold text-purple-900">
-                              Selected Support Staff
-                            </p>
-                            <p className="text-xs text-purple-700">
-                              {getSelectedPersonName()}
-                            </p>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => {
-                            setSelectedSupportStaff("");
-                            setSupportStaffSearch("");
-                          }}
-                          className="text-purple-600 hover:text-purple-800 cursor-pointer p-1 hover:bg-purple-100 rounded-lg transition-colors"
-                        >
-                          <i className="ri-close-line text-xs"></i>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Support staff search results */}
-                  {supportStaffSearch &&
-                    !selectedSupportStaff &&
-                    filteredSupportStaff.length > 0 && (
-                      <div className="mt-2 max-h-24 overflow-y-auto border border-gray-200 rounded-lg bg-white shadow-lg">
-                        {filteredSupportStaff.map((staff) => (
-                          <button
-                            key={staff.id}
-                            onClick={() => {
-                              setSelectedSupportStaff(staff.id.toString());
-                              setSelectedSupportStaffObj(staff);
-                              setSupportStaffSearch(
-                                `${staff.name} (${staff.staffId})`
-                              );
-                            }}
-                            className="w-full px-2 py-2 text-left hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0 transition-colors"
-                          >
-                            <div className="flex items-center space-x-2">
-                              <div className="w-6 h-6 bg-purple-100 rounded-lg flex items-center justify-center">
-                                <i className="ri-tools-line text-purple-500 text-xs"></i>
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="font-medium text-gray-900 truncate text-xs">
-                                  {staff.name}
-                                </div>
-                                <div className="text-xs text-gray-500 truncate">
-                                  {staff.staffId} •{" "}
-                                  {staff.designation || "No Designation"}
+                              <div className="flex items-center space-x-2">
+                                {emp.qrCode ? (
+                                  <div className="w-7 h-7 border border-gray-300 rounded-lg overflow-hidden">
+                                    <img
+                                      src={emp.qrCode}
+                                      alt="QR"
+                                      className="w-full h-full object-cover"
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className="w-7 h-7 bg-blue-100 rounded-lg flex items-center justify-center">
+                                    <i className="ri-user-line text-blue-500 text-xs"></i>
+                                  </div>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-medium text-gray-900 truncate text-xs">
+                                    {emp.employeeName}
+                                  </div>
+                                  <div className="text-xs text-gray-500 truncate">
+                                    {emp.employeeId} •{" "}
+                                    {emp.companyName || "No Company"}
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                  {supportStaffSearch &&
-                    !selectedSupportStaff &&
-                    filteredSupportStaff.length === 0 &&
-                    supportStaff.length > 0 && (
-                      <div className="mt-2 p-2 text-center text-gray-500 border border-gray-200 rounded-lg bg-gray-50">
-                        <i className="ri-search-line text-lg mb-1 block"></i>
-                        <p className="text-xs">
-                          No support staff found matching "{supportStaffSearch}"
-                        </p>
-                      </div>
-                    )}
-
-                  {supportStaff.length === 0 && !selectedSupportStaff && (
-                    <div className="mt-2 p-2 text-center text-gray-500 border border-gray-200 rounded-lg bg-gray-50">
-                      <i className="ri-tools-line text-lg mb-1 block"></i>
-                      <p className="text-xs">No support staff available</p>
-                      <p className="text-xs text-gray-400 mt-1">
-                        Add support staff above or in Master Data
-                      </p>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                // Guest Selection
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <label className="block text-xs font-semibold text-gray-700">
-                      <i className="ri-user-add-line mr-1"></i>
-                      Select Guest
-                    </label>
-                    <button
-                      onClick={() => setShowAddGuest(!showAddGuest)}
-                      className="text-green-600 hover:text-green-700 text-xs font-medium cursor-pointer hover:bg-green-50 px-2 py-1 rounded-lg transition-colors"
-                    >
-                      <i className="ri-add-line mr-1"></i>
-                      Add New
-                    </button>
-                  </div>
-
-                  {showAddGuest && (
-                    <div className="space-y-2 p-2 bg-green-50 rounded-lg border border-green-200">
-                      <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                          Guest Name
-                        </label>
-                        <input
-                          type="text"
-                          value={newGuestName}
-                          onChange={(e) => setNewGuestName(e.target.value)}
-                          className="w-full px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none text-xs"
-                          placeholder="Enter guest name"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                          Company Name
-                        </label>
-                        {companyNames.length > 0 ? (
-                          <div className="relative">
-                            <select
-                              value={guestCompanyName}
-                              onChange={(e) =>
-                                setGuestCompanyName(e.target.value)
-                              }
-                              className="w-full px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none pr-6 appearance-none text-xs"
-                            >
-                              <option value="">Select company...</option>
-                              {companyNames.map((company, index) => (
-                                <option key={index} value={company}>
-                                  {company}
-                                </option>
-                              ))}
-                            </select>
-                            <i className="ri-arrow-down-s-line absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none text-xs"></i>
-                          </div>
-                        ) : (
-                          <input
-                            type="text"
-                            value={guestCompanyName}
-                            onChange={(e) =>
-                              setGuestCompanyName(e.target.value)
-                            }
-                            className="w-full px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none text-xs"
-                            placeholder="Enter company name"
-                          />
-                        )}
-                      </div>
-
-                      <div className="flex space-x-2">
-                        <button
-                          onClick={addGuest}
-                          className="px-2 py-2 bg-green-600 text-white rounded-lg text-xs hover:bg-green-7  cursor-pointer whitespace-nowrap flex-1 font-medium transition-colors"
-                        >
-                          <i className="ri-add-line mr-1"></i>
-                          Add Guest
-                        </button>
-                        <button
-                          onClick={() => setShowAddGuest(false)}
-                          className="px-2 py-2 bg-gray-300 text-gray-700 rounded-lg text-xs hover:bg-gray-4 cursor-pointer whitespace-nowrap flex-1 font-medium transition-colors"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">
-                      Search Guest
-                    </label>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={guestSearch}
-                        onChange={(e) => setGuestSearch(e.target.value)}
-                        className="w-full px-3 py-2 pl-8 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none text-sm"
-                        placeholder="Search guest by name..."
-                      />
-                      <i className="ri-search-line absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-sm"></i>
-                    </div>
-                  </div>
-
-                  {/* Show selected guest */}
-                  {selectedGuest && (
-                    <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center">
-                          <div className="w-6 h-6 bg-green-500 rounded-lg flex items-center justify-center mr-2">
-                            <i className="ri-user-add-line text-white text-xs"></i>
-                          </div>
-                          <div>
-                            <p className="text-xs font-semibold text-green-900">
-                              Selected Guest
-                            </p>
-                            <p className="text-xs text-green-700">
-                              {getSelectedPersonName()}
-                            </p>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => {
-                            setSelectedGuest("");
-                            setSelectedGuestObj(null);
-                            setGuestSearch("");
-                          }}
-                          className="text-green-600 hover:text-green-800 cursor-pointer p-1 hover:bg-green-100 rounded-lg transition-colors"
-                        >
-                          <i className="ri-close-line text-xs"></i>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Guest search results */}
-                  {guestSearch &&
-                    !selectedGuest &&
-                    filteredGuests.length > 0 && (
-                      <div className="mt-2 max-h-48 overflow-y-auto border border-gray-200 rounded-lg bg-white shadow-lg">
-                        {filteredGuests.map((guest) => (
-                          <button
-                            key={guest.id}
-                            onClick={() => {
-                              setSelectedGuest(guest.id.toString());
-                              setSelectedGuestObj(guest);
-                              setGuestSearch(`${guest.name} - ${guest.companyName}`);
-                            }}
-                            className="w-full px-2 py-2 text-left hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0 transition-colors"
-                          >
-                            <div className="flex items-center space-x-2">
-                              <div className="w-6 h-6 bg-green-100 rounded-lg flex items-center justify-center">
-                                <i className="ri-user-add-line text-green-500 text-xs"></i>
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="font-medium text-gray-900 truncate text-xs">
-                                  {guest.name}
-                                </div>
-                                <div className="text-xs text-gray-500 truncate">
-                                  {guest.companyName}
-                                </div>
-                              </div>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                  {guestSearch &&
-                    !selectedGuest &&
-                    filteredGuests.length === 0 &&
-                    guests.length > 0 && (
-                      <div className="mt-2 p-2 text-center text-gray-500 border border-gray-200 rounded-lg bg-gray-50">
-                        <i className="ri-search-line text-lg mb-1 block"></i>
-                        <p className="text-xs">
-                          No guests found matching "{guestSearch}"
-                        </p>
-                      </div>
-                    )}
-
-                  {/* Dropdown for selecting guest */}
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">
-                      Choose Guest
-                    </label>
-                    {allGuests.length > 0 ? (
-                      <div className="relative">
-                        <select
-                          value={selectedGuest}
-                          onChange={(e) => {
-                            const id = e.target.value;
-                            setSelectedGuest(id);
-                            const g =
-                              allGuests.find((x) => x.id.toString() === id) || null;
-                            setSelectedGuestObj(g);
-                            if (g) {
-                              setGuestSearch(`${g.name} - ${g.companyName}`);
-                            } else {
-                              setGuestSearch("");
-                            }
-                          }}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none pr-6 appearance-none text-sm"
-                        >
-                          <option value="">Choose guest...</option>
-                          {allGuests.map((guest) => (
-                            <option key={guest.id} value={guest.id.toString()}>
-                              {guest.name} - {guest.companyName}
-                            </option>
+                            </button>
                           ))}
-                        </select>
-                        <i className="ri-arrow-down-s-line absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none"></i>
-                      </div>
-                    ) : (
-                      <div className="mt-2 p-2 text-center text-gray-500 border border-gray-200 rounded-lg bg-gray-50">
-                        <i className="ri-user-add-line text-lg mb-1 block"></i>
-                        <p className="text-xs">No guests available</p>
-                        <p className="text-xs text-gray-400 mt-1">
-                          Add guests above or in Master Data
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+                        </div>
+                      )}
+
+                      {/* Support Staff Section */}
+                      {filteredCustomers.supportStaff.length > 0 && (
+                        <div>
+                          <div className="px-3 py-2 bg-purple-50 border-b border-purple-200 sticky top-0">
+                            <p className="text-xs font-semibold text-purple-900">
+                              Support Staff:
+                            </p>
+                          </div>
+                          {filteredCustomers.supportStaff.map((staff) => (
+                            <button
+                              key={staff.id}
+                              onClick={() =>
+                                handleCustomerSelect("supportStaff", staff.id.toString(), staff)
+                              }
+                              className="w-full px-2 py-2 text-left hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0 transition-colors"
+                            >
+                              <div className="flex items-center space-x-2">
+                                <div className="w-7 h-7 bg-purple-100 rounded-lg flex items-center justify-center">
+                                  <i className="ri-tools-line text-purple-500 text-xs"></i>
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-medium text-gray-900 truncate text-xs">
+                                    {staff.name}
+                                  </div>
+                                  <div className="text-xs text-gray-500 truncate">
+                                    {staff.staffId} •{" "}
+                                    {staff.designation || "No Designation"}
+                                  </div>
+                                </div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Guests Section */}
+                      {filteredCustomers.guests.length > 0 && (
+                        <div>
+                          <div className="px-3 py-2 bg-green-50 border-b border-green-200 sticky top-0">
+                            <p className="text-xs font-semibold text-green-900">
+                              Guest:
+                            </p>
+                          </div>
+                          {filteredCustomers.guests.map((guest) => (
+                            <button
+                              key={guest.id}
+                              onClick={() =>
+                                handleCustomerSelect("guest", guest.id.toString(), guest)
+                              }
+                              className="w-full px-2 py-2 text-left hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0 transition-colors"
+                            >
+                              <div className="flex items-center space-x-2">
+                                <div className="w-7 h-7 bg-green-100 rounded-lg flex items-center justify-center">
+                                  <i className="ri-user-add-line text-green-500 text-xs"></i>
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-medium text-gray-900 truncate text-xs">
+                                    {guest.name}
+                                  </div>
+                                  <div className="text-xs text-gray-500 truncate">
+                                    {guest.companyName}
+                                  </div>
+                                </div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                {/* No results message */}
+                {customerSearch &&
+                  !selectedEmployee &&
+                  !selectedSupportStaff &&
+                  !selectedGuest &&
+                  filteredCustomers.employees.length === 0 &&
+                  filteredCustomers.supportStaff.length === 0 &&
+                  filteredCustomers.guests.length === 0 && (
+                    <div className="mt-2 p-2 text-center text-gray-500 border border-gray-200 rounded-lg bg-gray-50">
+                      <i className="ri-search-line text-lg mb-1 block"></i>
+                      <p className="text-xs">
+                        No customers found matching "{customerSearch}"
+                      </p>
+                    </div>
+                  )}
+              </div>
             </div>
           </div>
         </div>

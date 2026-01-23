@@ -30,6 +30,15 @@ interface SupportStaff {
   isActive: boolean;
 }
 
+interface Guest {
+  id: number;
+  name: string;
+  companyName: string;
+  createdBy: string;
+  createdDate: string;
+  isActive: boolean;
+}
+
 interface PriceMaster {
   employee: {
     breakfast: number;
@@ -42,14 +51,16 @@ interface PriceMaster {
 }
 
 export default function Master() {
-  const [activeTab, setActiveTab] = useState<'employee' | 'supportStaff' | 'price'>('employee');
+  const [activeTab, setActiveTab] = useState<'employee' | 'supportStaff' | 'guest' | 'price'>('employee');
   const [showAddForm, setShowAddForm] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [editingSupportStaff, setEditingSupportStaff] = useState<SupportStaff | null>(null);
+  const [editingGuest, setEditingGuest] = useState<Guest | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [supportStaff, setSupportStaff] = useState<SupportStaff[]>([]);
+  const [guests, setGuests] = useState<Guest[]>([]);
   const [priceMaster, setPriceMaster] = useState<PriceMaster>({
     employee: { breakfast: 20, lunch: 48 },
     company: { breakfast: 135, lunch: 165 }
@@ -73,6 +84,11 @@ export default function Master() {
     designation: '',
     companyName: '',
     biometricData: ''
+  });
+
+  const [guestFormData, setGuestFormData] = useState({
+    name: '',
+    companyName: ''
   });
 
   
@@ -100,14 +116,6 @@ export default function Master() {
       const employeeTotal = typeof employeeRes?.total === 'number' ? employeeRes.total : employeeData.length;
       setEmployees(employeeData);
       if (activeTab === 'employee') setTotalCount(employeeTotal);
-      
-      // Extract unique company names from employees
-      const uniqueCompanies = Array.from(new Set(
-        employeeData
-          .map((emp: Employee) => emp.companyName)
-          .filter((company: string | undefined): company is string => !!company && company.trim() !== '')
-      ));
-      setCompanyNames(uniqueCompanies as string[]);
 
       // Load support staff with pagination/sort/filter
       const staffRes = await mastersApi.getSupportStaff({ page, limit, sortBy: 'name', sortOrder, q: search });
@@ -116,7 +124,46 @@ export default function Master() {
       setSupportStaff(supportStaffData);
       if (activeTab === 'supportStaff') setTotalCount(staffTotal);
 
-      // Guests loading removed per request
+      // Load guests with pagination/sort/filter
+      const guestRes = await mastersApi.getGuests({ page, limit, sortBy: 'name', sortOrder, q: search });
+      const guestData = Array.isArray(guestRes?.data) ? guestRes.data : guestRes;
+      const guestTotal = typeof guestRes?.total === 'number' ? guestRes.total : guestData.length;
+      setGuests(guestData);
+      if (activeTab === 'guest') setTotalCount(guestTotal);
+
+      // Load ALL company names from employees, support staff, and guests (without pagination)
+      // This ensures dropdown shows all available company names like in billing page
+      const [allEmployeesRes, allSupportStaffRes, allGuestsRes] = await Promise.all([
+        mastersApi.getEmployees({ limit: 1000, sortBy: 'employeeName' }),
+        mastersApi.getSupportStaff({ limit: 1000, sortBy: 'name' }),
+        mastersApi.getGuests({ limit: 1000, sortBy: 'name' })
+      ]);
+      
+      const allEmployees = Array.isArray(allEmployeesRes?.data) ? allEmployeesRes.data : allEmployeesRes;
+      const allSupportStaff = Array.isArray(allSupportStaffRes?.data) ? allSupportStaffRes.data : allSupportStaffRes;
+      const allGuests = Array.isArray(allGuestsRes?.data) ? allGuestsRes.data : allGuestsRes;
+
+      // Extract unique company names from all sources
+      const companyNamesFromEmployees = allEmployees
+        .map((emp: Employee) => emp.companyName)
+        .filter((company: string | undefined): company is string => !!company && company.trim() !== '');
+      
+      const companyNamesFromSupportStaff = allSupportStaff
+        .map((staff: SupportStaff) => staff.companyName)
+        .filter((company: string | undefined): company is string => !!company && company.trim() !== '');
+      
+      const companyNamesFromGuests = allGuests
+        .map((guest: Guest) => guest.companyName)
+        .filter((company: string | undefined): company is string => !!company && company.trim() !== '');
+
+      // Combine and deduplicate all company names
+      const allCompanyNames = Array.from(new Set([
+        ...companyNamesFromEmployees,
+        ...companyNamesFromSupportStaff,
+        ...companyNamesFromGuests
+      ])).sort();
+      
+      setCompanyNames(allCompanyNames);
 
       // Load price master
       const priceMasterData = await mastersApi.getPriceMaster();
@@ -129,15 +176,7 @@ export default function Master() {
     }
   };
 
-  // Update company names when employees change
-  useEffect(() => {
-    const uniqueCompanies = Array.from(new Set(
-      employees
-        .map((emp) => emp.companyName)
-        .filter((company): company is string => !!company && company.trim() !== '')
-    ));
-    setCompanyNames(uniqueCompanies as string[]);
-  }, [employees]);
+  // Company names are now loaded directly in loadMasterData from all sources (employees, support staff, guests)
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({
@@ -153,7 +192,12 @@ export default function Master() {
     });
   };
 
-  // Guest handlers removed
+  const handleGuestInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    setGuestFormData({
+      ...guestFormData,
+      [e.target.name]: e.target.value
+    });
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -206,6 +250,18 @@ export default function Master() {
           designation: '',
           companyName: '',
           biometricData: ''
+        });
+      } else if (activeTab === 'guest') {
+        if (!guestFormData.name || !guestFormData.companyName) {
+          alert('Guest Name and Company Name are mandatory fields');
+          return;
+        }
+
+        const newGuest = await mastersApi.createGuest(guestFormData);
+        setGuests([...guests, newGuest]);
+        setGuestFormData({
+          name: '',
+          companyName: ''
         });
       }
 
@@ -375,7 +431,7 @@ export default function Master() {
     }
   };
 
-  const handleEdit = (item: Employee | SupportStaff) => {
+  const handleEdit = (item: Employee | SupportStaff | Guest) => {
     if (activeTab === 'employee') {
       const employee = item as Employee;
       setEditingEmployee(employee);
@@ -388,7 +444,7 @@ export default function Master() {
         location: employee.location || '',
         qrCode: employee.qrCode || ''
       });
-    } else {
+    } else if (activeTab === 'supportStaff') {
       const staff = item as SupportStaff;
       setEditingSupportStaff(staff);
       setSupportStaffFormData({
@@ -397,6 +453,13 @@ export default function Master() {
         designation: staff.designation || '',
         companyName: staff.companyName || '',
         biometricData: staff.biometricData || ''
+      });
+    } else if (activeTab === 'guest') {
+      const guest = item as Guest;
+      setEditingGuest(guest);
+      setGuestFormData({
+        name: guest.name,
+        companyName: guest.companyName
       });
     }
     setShowEditForm(true);
@@ -426,6 +489,15 @@ export default function Master() {
         const updatedSupportStaff = await mastersApi.updateSupportStaff(editingSupportStaff.id.toString(), supportStaffFormData);
         setSupportStaff(supportStaff.map((s) => (s.id === editingSupportStaff.id ? updatedSupportStaff : s)));
         setEditingSupportStaff(null);
+      } else if (activeTab === 'guest' && editingGuest) {
+        if (!guestFormData.name || !guestFormData.companyName) {
+          alert('Guest Name and Company Name are mandatory fields');
+          return;
+        }
+
+        const updatedGuest = await mastersApi.updateGuest(editingGuest.id.toString(), guestFormData);
+        setGuests(guests.map((g) => (g.id === editingGuest.id ? updatedGuest : g)));
+        setEditingGuest(null);
       }
 
       setShowEditForm(false);
@@ -445,6 +517,10 @@ export default function Master() {
         companyName: '',
         biometricData: ''
       });
+      setGuestFormData({
+        name: '',
+        companyName: ''
+      });
     } catch (error: any) {
       console.error('Error updating record:', error);
       alert(error.message || 'Failed to update record');
@@ -453,7 +529,7 @@ export default function Master() {
     }
   };
 
-  const handleDelete = async (item: Employee | SupportStaff) => {
+  const handleDelete = async (item: Employee | SupportStaff | Guest) => {
     try {
       if (activeTab === 'employee') {
         const employee = item as Employee;
@@ -461,11 +537,17 @@ export default function Master() {
           await mastersApi.deleteEmployee(employee.id.toString());
           setEmployees(employees.filter((e) => e.id !== employee.id));
         }
-      } else {
+      } else if (activeTab === 'supportStaff') {
         const staff = item as SupportStaff;
         if (confirm(`Delete support staff "${staff.name}"?`)) {
           await mastersApi.deleteSupportStaff(staff.id.toString());
           setSupportStaff(supportStaff.filter((s) => s.id !== staff.id));
+        }
+      } else if (activeTab === 'guest') {
+        const guest = item as Guest;
+        if (confirm(`Delete guest "${guest.name}"?`)) {
+          await mastersApi.deleteGuest(guest.id.toString());
+          setGuests(guests.filter((g) => g.id !== guest.id));
         }
       }
     } catch (error: any) {
@@ -477,6 +559,7 @@ export default function Master() {
   const cancelEdit = () => {
     setEditingEmployee(null);
     setEditingSupportStaff(null);
+    setEditingGuest(null);
     setShowEditForm(false);
     setFormData({
       employeeId: '',
@@ -493,6 +576,10 @@ export default function Master() {
       designation: '',
       companyName: '',
       biometricData: ''
+    });
+    setGuestFormData({
+      name: '',
+      companyName: ''
     });
   };
 
@@ -661,7 +748,7 @@ export default function Master() {
               <input
                 value={search}
                 onChange={(e) => { setPage(1); setSearch(e.target.value); }}
-                placeholder={`Search ${activeTab === 'employee' ? 'employee' : 'support staff'}...`}
+                placeholder={`Search ${activeTab === 'employee' ? 'employee' : activeTab === 'supportStaff' ? 'support staff' : 'guest'}...`}
                 className="outline-none text-sm w-56"
               />
             </div>
@@ -699,7 +786,7 @@ export default function Master() {
                 className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition-colors whitespace-nowrap flex items-center"
               >
                 <i className="ri-add-line mr-2"></i>
-                Add {activeTab === 'employee' ? 'Employee' : 'Support Staff'}
+                Add {activeTab === 'employee' ? 'Employee' : activeTab === 'supportStaff' ? 'Support Staff' : 'Guest'}
               </button>
             )}
           </div>
@@ -781,10 +868,21 @@ export default function Master() {
                 Support Staff Master
               </button>
               <button
+                onClick={() => setActiveTab('guest')}
+                className={`py-4 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${
+                  activeTab === 'guest'
+                    ? 'border-green-500 text-green-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                <i className="ri-user-add-line mr-2"></i>
+                Guest Master
+              </button>
+              <button
                 onClick={() => setActiveTab('price')}
                 className={`py-4 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${
                   activeTab === 'price'
-                    ? 'border-green-500 text-green-600'
+                    ? 'border-orange-500 text-orange-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 }`}
               >
@@ -905,7 +1003,7 @@ export default function Master() {
                     <div className="p-6 border-b border-gray-200 flex justify-between items-center">
                       <h2 className="text-xl font-semibold text-gray-800">
                         {showEditForm ? 'Edit' : 'Add New'}{' '}
-                        {activeTab === 'employee' ? 'Employee' : 'Support Staff'}
+                        {activeTab === 'employee' ? 'Employee' : activeTab === 'supportStaff' ? 'Support Staff' : 'Guest'}
                       </h2>
                       <button
                         onClick={() => {
@@ -920,7 +1018,7 @@ export default function Master() {
                     </div>
 
                     <form onSubmit={showEditForm ? handleUpdate : handleSubmit} className="p-6 space-y-4">
-                      {activeTab === 'employee' ? (
+                      {activeTab === 'employee' && (
                         <>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
@@ -1024,7 +1122,8 @@ export default function Master() {
                             </div>
                           </div>
                         </>
-                      ) : (
+                      )}
+                      {activeTab === 'supportStaff' && (
                         <>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
@@ -1122,13 +1221,65 @@ export default function Master() {
                           </div>
                         </>
                       )}
+                      {activeTab === 'guest' && (
+                        <>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Guest Name *
+                              </label>
+                              <input
+                                type="text"
+                                name="name"
+                                value={guestFormData.name}
+                                onChange={handleGuestInputChange}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                                required
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Company Name *
+                              </label>
+                              {companyNames.length > 0 ? (
+                                <select
+                                  name="companyName"
+                                  value={guestFormData.companyName}
+                                  onChange={handleGuestInputChange}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                                  required
+                                >
+                                  <option value="">Select company...</option>
+                                  {companyNames.map((c, i) => (
+                                    <option key={i} value={c}>
+                                      {c}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input
+                                  type="text"
+                                  name="companyName"
+                                  value={guestFormData.companyName}
+                                  onChange={handleGuestInputChange}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                                  required
+                                />
+                              )}
+                            </div>
+                          </div>
+                        </>
+                      )}
 
                       <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                         <p className="text-sm text-yellow-800">
                           <i className="ri-information-line mr-1"></i>
                           {activeTab === 'employee'
                             ? 'Only Employee ID and Employee Name are mandatory.'
-                            : 'Only Staff ID and Name are mandatory.'}
+                            : activeTab === 'supportStaff'
+                            ? 'Only Staff ID and Name are mandatory.'
+                            : 'Guest Name and Company Name are mandatory.'}
                         </p>
                       </div>
 
@@ -1151,11 +1302,13 @@ export default function Master() {
                               ? 'bg-green-600 hover:bg-green-700'
                               : activeTab === 'employee'
                               ? 'bg-blue-600 hover:bg-blue-700'
-                              : 'bg-purple-600 hover:bg-purple-700'
+                              : activeTab === 'supportStaff'
+                              ? 'bg-purple-600 hover:bg-purple-700'
+                              : 'bg-green-600 hover:bg-green-700'
                           }`}
                         >
                           {showEditForm ? 'Update' : 'Add'}{' '}
-                          {activeTab === 'employee' ? 'Employee' : 'Support Staff'}
+                          {activeTab === 'employee' ? 'Employee' : activeTab === 'supportStaff' ? 'Support Staff' : 'Guest'}
                         </button>
                       </div>
                     </form>
@@ -1168,7 +1321,7 @@ export default function Master() {
                 <table className="w-full">
                   <thead className="bg-gray-50">
                     <tr>
-                      {activeTab === 'employee' ? (
+                      {activeTab === 'employee' && (
                         <>
                           <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             QR Code
@@ -1236,7 +1389,8 @@ export default function Master() {
                             Actions
                           </th>
                         </>
-                      ) : (
+                      )}
+                      {activeTab === 'supportStaff' && (
                         <>
                           <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             Biometric Data
@@ -1299,18 +1453,59 @@ export default function Master() {
                           </th>
                         </>
                       )}
+                      {activeTab === 'guest' && (
+                        <>
+                          <th
+                            className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer select-none"
+                            onClick={() => {
+                              const next = (sortBy as any) === 'name' && sortOrder === 'ASC' ? 'DESC' : 'ASC';
+                              setSortBy('name' as any);
+                              setSortOrder((sortBy as any) === 'name' ? (next as any) : 'ASC');
+                            }}
+                          >
+                            Guest Name * {(sortBy as any) === 'name' ? (sortOrder === 'ASC' ? '▲' : '▼') : ''}
+                          </th>
+                          <th
+                            className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer select-none"
+                            onClick={() => {
+                              const next = (sortBy as any) === 'companyName' && sortOrder === 'ASC' ? 'DESC' : 'ASC';
+                              setSortBy('companyName' as any);
+                              setSortOrder((sortBy as any) === 'companyName' ? (next as any) : 'ASC');
+                            }}
+                          >
+                            Company Name {(sortBy as any) === 'companyName' ? (sortOrder === 'ASC' ? '▲' : '▼') : ''}
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Created By
+                          </th>
+                          <th
+                            className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer select-none"
+                            onClick={() => {
+                              const next = (sortBy as any) === 'createdDate' && sortOrder === 'ASC' ? 'DESC' : 'ASC';
+                              setSortBy('createdDate' as any);
+                              setSortOrder((sortBy as any) === 'createdDate' ? (next as any) : 'ASC');
+                            }}
+                          >
+                            Created Date {(sortBy as any) === 'createdDate' ? (sortOrder === 'ASC' ? '▲' : '▼') : ''}
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Actions
+                          </th>
+                        </>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {activeTab === 'employee' ? (
-                      employees.length === 0 ? (
-                        <tr>
-                          <td colSpan={10} className="px-6 py-8 text-center text-gray-500">
-                            No employees found. Add employees manually or sync with HRMS.
-                          </td>
-                        </tr>
-                      ) : (
-                        employees.map((employee) => (
+                    {activeTab === 'employee' && (
+                      <>
+                        {employees.length === 0 ? (
+                          <tr>
+                            <td colSpan={10} className="px-6 py-8 text-center text-gray-500">
+                              No employees found. Add employees manually or sync with HRMS.
+                            </td>
+                          </tr>
+                        ) : (
+                          employees.map((employee) => (
                           <tr key={employee.id} className="hover:bg-gray-50">
                             <td className="px-6 py-4 whitespace-nowrap">
                               {employee.qrCode ? (
@@ -1363,19 +1558,23 @@ export default function Master() {
                                 >
                                   <i className="ri-delete-bin-line"></i>
                                 </button>
-                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                          ))
+                        )}
+                      </>
+                    )}
+                    {activeTab === 'supportStaff' && (
+                      <>
+                        {supportStaff.length === 0 ? (
+                          <tr>
+                            <td colSpan={8} className="px-6 py-8 text-center text-gray-500">
+                              No support staff found. Add support staff manually or sync with HRMS.
                             </td>
                           </tr>
-                        ))
-                      )
-                    ) : supportStaff.length === 0 ? (
-                      <tr>
-                        <td colSpan={8} className="px-6 py-8 text-center text-gray-500">
-                          No support staff found. Add support staff manually or sync with HRMS.
-                        </td>
-                      </tr>
-                    ) : (
-                      supportStaff.map((staff) => (
+                        ) : (
+                          supportStaff.map((staff) => (
                         <tr key={staff.id} className="hover:bg-gray-50">
                           <td className="px-6 py-4 whitespace-nowrap">
                             {staff.biometricData ? (
@@ -1425,7 +1624,55 @@ export default function Master() {
                             </div>
                           </td>
                         </tr>
-                      ))
+                          ))
+                        )}
+                      </>
+                    )}
+                    {activeTab === 'guest' && (
+                      <>
+                        {guests.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
+                              No guests found. Add guests manually.
+                            </td>
+                          </tr>
+                        ) : (
+                          guests.map((guest) => (
+                        <tr key={guest.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {guest.name}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {guest.companyName}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {guest.createdBy}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {guest.createdDate}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            <div className="flex space-x-2">
+                              <button
+                                onClick={() => handleEdit(guest)}
+                                className="p-2 text-green-600 hover:bg-green-50 rounded-lg"
+                                title="Edit Guest"
+                              >
+                                <i className="ri-edit-line"></i>
+                              </button>
+                              <button
+                                onClick={() => handleDelete(guest)}
+                                className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
+                                title="Delete Guest"
+                              >
+                                <i className="ri-delete-bin-line"></i>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                          ))
+                        )}
+                      </>
                     )}
                   </tbody>
                 </table>
