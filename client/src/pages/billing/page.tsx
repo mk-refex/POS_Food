@@ -127,12 +127,16 @@ export default function Billing() {
       if (!customerSearch.trim()) {
         // If search is empty, load all data
         try {
-          const [employeeRes, supportRes] = await Promise.all([
+          const [employeeRes, supportRes, guestRes] = await Promise.all([
             mastersApi.getEmployees({
               limit: 1000,
               sortBy: "employeeName",
             }),
             mastersApi.getSupportStaff({
+              limit: 1000,
+              sortBy: "name",
+            }),
+            mastersApi.getGuests({
               limit: 1000,
               sortBy: "name",
             }),
@@ -147,9 +151,18 @@ export default function Billing() {
               ? (supportRes as any).data
               : supportRes
           ) as SupportStaff[];
+          const guestData = (
+            Array.isArray((guestRes as any)?.data)
+              ? (guestRes as any).data
+              : guestRes
+          ) as Guest[];
           setEmployees(employeeData);
           setSupportStaff(supportStaffData);
-        } catch (e) {}
+          setGuests(guestData);
+          setAllGuests(guestData);
+        } catch (e) {
+          console.error("Error loading master data:", e);
+        }
         return;
       }
 
@@ -158,14 +171,19 @@ export default function Billing() {
       const searchQuery = extractedId || customerSearch;
 
       try {
-        // Search employees and support staff in parallel
-        const [employeeRes, supportRes] = await Promise.all([
+        // Search employees, support staff, and guests in parallel
+        const [employeeRes, supportRes, guestRes] = await Promise.all([
           mastersApi.getEmployees({
             q: searchQuery,
             limit: 50,
             sortBy: "employeeName",
           }),
           mastersApi.getSupportStaff({
+            q: searchQuery,
+            limit: 50,
+            sortBy: "name",
+          }),
+          mastersApi.getGuests({
             q: searchQuery,
             limit: 50,
             sortBy: "name",
@@ -181,15 +199,21 @@ export default function Billing() {
             ? (supportRes as any).data
             : supportRes
         ) as SupportStaff[];
+        const guestList = (
+          Array.isArray((guestRes as any)?.data)
+            ? (guestRes as any).data
+            : guestRes
+        ) as Guest[];
         setEmployees(employeeList);
         setSupportStaff(supportStaffList);
-      } catch (e) {}
+        setGuests(guestList);
+        setAllGuests(guestList);
+      } catch (e) {
+        console.error("Error searching customers:", e);
+      }
     }, 300);
     return () => clearTimeout(handle);
   }, [customerSearch]);
-
-  // Note: Removed server-side search for guests - using client-side filtering instead
-  // This ensures dropdown always shows all guests while search filters client-side
 
   const menuItems = [
     { id: "1", name: "Breakfast", price: 0, category: "Breakfast" },
