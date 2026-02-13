@@ -6,10 +6,14 @@ import dashboardRouter from './dashboard.routes.js';
 import transactionsRouter from './transactions.routes.js';
 import adminRouter from './admin.routes.js';
 import mastersRouter from './masters.routes.js';
+import employeeAuthRouter from './employeeAuth.routes.js';
+import employeeRouter from './employee.routes.js';
 
 const router = Router();
 
 router.use('/auth', authRouter);
+router.use('/employee-auth', employeeAuthRouter);
+router.use('/employee', employeeRouter);
 router.use('/users', usersRouter);
 router.use('/reports', reportsRouter);
 router.use('/dashboard', dashboardRouter);

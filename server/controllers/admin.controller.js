@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { Op } from 'sequelize';
-import { User, ApiConfig } from '../models/index.js';
+import { User, ApiConfig, SsoConfig, SmtpConfig } from '../models/index.js';
+import nodemailer from 'nodemailer';
 
 // User Management
 export async function listUsers(req, res) {
@@ -188,6 +189,147 @@ export async function upsertApiConfig(req, res) {
     return res.json(cfg);
   } catch (e) {
     return res.status(500).json({ message: 'Failed to save API config', error: e.message });
+  }
+}
+
+// SSO Config (Google) – get/upsert for employee login
+export async function getSsoConfig(req, res) {
+  try {
+    const config = await SsoConfig.findOne({ where: { provider: 'google' } });
+    if (!config) {
+      return res.json(null);
+    }
+    const json = config.toJSON();
+    // Don't send full secret to client; indicate if set
+    if (json.clientSecret) {
+      json.clientSecret = '••••••';
+    }
+    return res.json(json);
+  } catch (e) {
+    return res.status(500).json({ message: 'Failed to fetch SSO config', error: e.message });
+  }
+}
+
+export async function upsertSsoConfig(req, res) {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const { provider, clientId, clientSecret, redirectUri, frontendBaseUrl } = body;
+    const effectiveProvider = (String(provider || 'google').trim()) || 'google';
+    let config = await SsoConfig.findOne({ where: { provider: effectiveProvider } });
+    if (!config) {
+      config = await SsoConfig.create({
+        provider: effectiveProvider,
+        clientId: clientId != null ? String(clientId) : '',
+        clientSecret: clientSecret != null ? String(clientSecret) : '',
+        redirectUri: (redirectUri != null && String(redirectUri).trim()) ? String(redirectUri).trim() : null,
+        frontendBaseUrl: (frontendBaseUrl != null && String(frontendBaseUrl).trim()) ? String(frontendBaseUrl).trim() : null,
+      });
+    } else {
+      const updates = {
+        clientId: clientId !== undefined ? (clientId == null ? '' : String(clientId)) : config.clientId,
+        redirectUri: redirectUri !== undefined ? ((redirectUri == null || String(redirectUri).trim() === '') ? null : String(redirectUri).trim()) : config.redirectUri,
+        frontendBaseUrl: frontendBaseUrl !== undefined ? ((frontendBaseUrl == null || String(frontendBaseUrl).trim() === '') ? null : String(frontendBaseUrl).trim()) : config.frontendBaseUrl,
+      };
+      if (clientSecret !== undefined && clientSecret !== '' && clientSecret !== '••••••') {
+        updates.clientSecret = String(clientSecret);
+      }
+      await config.update(updates);
+    }
+    await config.reload();
+    const json = config.toJSON();
+    if (json.clientSecret) json.clientSecret = '••••••';
+    return res.json(json);
+  } catch (e) {
+    console.error('SSO config save error:', e);
+    return res.status(500).json({ message: e.message || 'Failed to save SSO config', error: e.message });
+  }
+}
+
+// SMTP Config – get/upsert/test
+export async function getSmtpConfig(req, res) {
+  try {
+    const config = await SmtpConfig.findOne({ where: { isActive: true } });
+    if (!config) return res.json(null);
+    const json = config.toJSON();
+    if (json.password) json.password = '••••••';
+    return res.json(json);
+  } catch (e) {
+    return res.status(500).json({ message: 'Failed to fetch SMTP config', error: e.message });
+  }
+}
+
+export async function upsertSmtpConfig(req, res) {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const { host, port, secure, user, password, fromEmail, fromName } = body;
+    let config = await SmtpConfig.findOne({ where: { isActive: true } });
+    const payload = {
+      host: host != null ? String(host).trim() : '',
+      port: port != null && port !== '' ? Number(port) : null,
+      secure: secure !== false && secure !== 'false',
+      user: user != null ? String(user).trim() : '',
+      fromEmail: fromEmail != null ? String(fromEmail).trim() : '',
+      fromName: fromName != null ? String(fromName).trim() : '',
+    };
+    if (password !== undefined && password !== '' && password !== '••••••') {
+      payload.password = String(password);
+    }
+    if (!config) {
+      config = await SmtpConfig.create({ ...payload, isActive: true });
+    } else {
+      await config.update(payload);
+    }
+    await config.reload();
+    const json = config.toJSON();
+    if (json.password) json.password = '••••••';
+    return res.json(json);
+  } catch (e) {
+    return res.status(500).json({ message: e.message || 'Failed to save SMTP config', error: e.message });
+  }
+}
+
+export async function testSmtp(req, res) {
+  try {
+    const { testEmail } = req.body && typeof req.body === 'object' ? req.body : {};
+    const to = (testEmail && String(testEmail).trim()) || null;
+    if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      return res.status(400).json({ message: 'Valid test email address is required' });
+    }
+    const config = await SmtpConfig.findOne({ where: { isActive: true } });
+    if (!config || !config.host || !config.user) {
+      return res.status(400).json({ message: 'SMTP config not set or incomplete. Save host and user first.' });
+    }
+    const transporter = nodemailer.createTransport({
+      host: config.host,
+      port: config.port || (config.secure ? 465 : 587),
+      secure: !!config.secure,
+      auth: config.user ? { user: config.user, pass: config.password || '' } : undefined,
+    });
+    const from = config.fromEmail || config.user || 'noreply@localhost';
+    const fromName = config.fromName || 'POS Food';
+    await transporter.sendMail({
+      from: config.fromName ? `"${config.fromName}" <${from}>` : from,
+      to,
+      subject: 'POS Food – SMTP test',
+      text: 'This is a test email from your POS Food SMTP configuration. If you received this, SMTP is working.',
+    });
+    return res.json({ success: true, message: 'Test email sent successfully' });
+  } catch (e) {
+    return res.status(500).json({ message: e.message || 'Failed to send test email', error: e.message });
+  }
+}
+
+// Run full HRMS sync (create + update employees & support staff). Used by cron and manual sync.
+export async function runHrmsSyncEndpoint(req, res) {
+  try {
+    const { runHrmsSync } = await import('../services/hrmsSync.js');
+    const result = await runHrmsSync();
+    if (result.error) {
+      return res.status(500).json({ message: result.error, result });
+    }
+    return res.json(result);
+  } catch (e) {
+    return res.status(500).json({ message: 'HRMS sync failed', error: e.message });
   }
 }
 

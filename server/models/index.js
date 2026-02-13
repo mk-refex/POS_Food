@@ -7,6 +7,10 @@ import { SupportStaff } from './SupportStaff.js';
 import { Guest } from './Guest.js';
 import { PriceMaster } from './PriceMaster.js';
 import { ApiConfig } from './ApiConfig.js';
+import { SsoConfig } from './SsoConfig.js';
+import { SmtpConfig } from './SmtpConfig.js';
+import { Menu } from './Menu.js';
+import { Feedback } from './Feedback.js';
 
 export function applyAssociations() {
   User.hasMany(Report, { foreignKey: 'userId', as: 'reports' });
@@ -14,7 +18,6 @@ export function applyAssociations() {
 
   User.hasMany(Transaction, { foreignKey: 'userId', as: 'transactions' });
   Transaction.belongsTo(User, { foreignKey: 'userId', as: 'cashier' });
-  // Company model removed; HrmsConfig no longer associated to Company
 }
 
-export { User, Report, Transaction, HrmsConfig, Employee, SupportStaff, Guest, PriceMaster, ApiConfig };
+export { User, Report, Transaction, HrmsConfig, Employee, SupportStaff, Guest, PriceMaster, ApiConfig, SsoConfig, SmtpConfig, Menu, Feedback };

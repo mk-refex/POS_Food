@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import Layout from '../../components/feature/Layout';
+import AnimatedNumber from '../../components/AnimatedNumber';
 import { apiFetch } from '../../api/client';
 
 interface Transaction {
@@ -51,7 +52,7 @@ export default function Dashboard() {
     try {
       setLoading(true);
       setError('');
-      
+
       // Load transactions
       const params = new URLSearchParams();
       const s = overrideStart !== undefined ? overrideStart : startDate;
@@ -59,7 +60,7 @@ export default function Dashboard() {
       if (s) params.set('startDate', s);
       if (e) params.set('endDate', e);
       const transactions = await apiFetch(`/transactions?${params.toString()}`);
-      
+
       // Filter by date range if specified
       let filteredTransactions = transactions;
       if (s) {
@@ -81,7 +82,7 @@ export default function Dashboard() {
         const lunchItems = txn.items
           .filter(item => item.name === 'Lunch')
           .reduce((sum, item) => sum + item.quantity, 0);
-        
+
         if (txn.customerType === 'guest') {
           breakfastGuest += breakfastItems;
           lunchGuest += lunchItems;
@@ -171,7 +172,7 @@ export default function Dashboard() {
             <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Dashboard</h1>
             <p className="text-gray-600 mt-1">Overview of your POS system analytics</p>
           </div>
-          
+
           {/* Date Filter */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
@@ -224,91 +225,86 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* System Stats Cards - REMOVED */}
-        {/* The Total Users, Invoices, and Reports widgets have been removed as requested */}
-
-        {/* Stats Cards - Updated with Support Staff */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 sm:gap-6">
-          {/* Breakfast Employee */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
+        {/* Stats Cards - Updated Design */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          {/* Breakfast Stats Card */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow card-raise">
             <div className="flex items-center justify-between">
+              {/* Left Side: Title & Breakdown */}
               <div className="flex-1">
-                <p className="text-sm font-medium text-gray-600 mb-1">Breakfast</p>
-                <p className="text-xs text-gray-500 mb-2">Employee</p>
-                <p className="text-2xl sm:text-3xl font-bold text-orange-600">{stats.breakfast.employee}</p>
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-12 h-12 bg-orange-100 rounded-xl flex items-center justify-center">
+                    <i className="ri-restaurant-line text-2xl text-orange-600"></i>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-800">Breakfast</h3>
+                    <p className="text-sm text-gray-500 font-medium">Overview</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <p className="text-xs font-semibold text-gray-400 uppercase mb-1">Emp</p>
+                    <p className="text-lg font-bold text-gray-800"><AnimatedNumber value={stats.breakfast.employee} /></p>
+                  </div>
+                  <div className="border-l border-gray-100 pl-4">
+                    <p className="text-xs font-semibold text-gray-400 uppercase mb-1">Staff</p>
+                    <p className="text-lg font-bold text-purple-600"><AnimatedNumber value={stats.breakfast.supportStaff} /></p>
+                  </div>
+                  <div className="border-l border-gray-100 pl-4">
+                    <p className="text-xs font-semibold text-gray-400 uppercase mb-1">Guest</p>
+                    <p className="text-lg font-bold text-orange-500"><AnimatedNumber value={stats.breakfast.guest} /></p>
+                  </div>
+                </div>
               </div>
-              <div className="w-12 h-12 bg-orange-100 rounded-xl flex items-center justify-center">
-                <i className="ri-restaurant-line text-2xl text-orange-600"></i>
+
+              {/* Right Side: Total Count */}
+              <div className="text-right pl-6 border-l border-gray-100 flex flex-col justify-center min-w-[120px]">
+                <span className="text-5xl sm:text-6xl font-black text-orange-600 block leading-none mb-2">
+                  <AnimatedNumber value={stats.breakfast.total} />
+                </span>
+                <span className="text-sm text-gray-400 font-medium uppercase tracking-wide">Total</span>
               </div>
             </div>
           </div>
 
-          {/* Breakfast Support Staff */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
+          {/* Lunch Stats Card */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow card-raise">
             <div className="flex items-center justify-between">
+              {/* Left Side: Title & Breakdown */}
               <div className="flex-1">
-                <p className="text-sm font-medium text-gray-600 mb-1">Breakfast</p>
-                <p className="text-xs text-gray-500 mb-2">Support Staff</p>
-                <p className="text-2xl sm:text-3xl font-bold text-purple-600">{stats.breakfast.supportStaff}</p>
-              </div>
-              <div className="w-12 h-12 bg-purple-100 rounded-xl flex items-center justify-center">
-                <i className="ri-tools-line text-2xl text-purple-600"></i>
-              </div>
-            </div>
-          </div>
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
+                    <i className="ri-bowl-line text-2xl text-green-600"></i>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-800">Lunch</h3>
+                    <p className="text-sm text-gray-500 font-medium">Overview</p>
+                  </div>
+                </div>
 
-          {/* Breakfast Guest */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
-            <div className="flex items-center justify-between">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-600 mb-1">Breakfast</p>
-                <p className="text-xs text-gray-500 mb-2">Guest</p>
-                <p className="text-2xl sm:text-3xl font-bold text-orange-500">{stats.breakfast.guest}</p>
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <p className="text-xs font-semibold text-gray-400 uppercase mb-1">Emp</p>
+                    <p className="text-lg font-bold text-gray-800"><AnimatedNumber value={stats.lunch.employee} /></p>
+                  </div>
+                  <div className="border-l border-gray-100 pl-4">
+                    <p className="text-xs font-semibold text-gray-400 uppercase mb-1">Staff</p>
+                    <p className="text-lg font-bold text-purple-500"><AnimatedNumber value={stats.lunch.supportStaff} /></p>
+                  </div>
+                  <div className="border-l border-gray-100 pl-4">
+                    <p className="text-xs font-semibold text-gray-400 uppercase mb-1">Guest</p>
+                    <p className="text-lg font-bold text-green-500"><AnimatedNumber value={stats.lunch.guest} /></p>
+                  </div>
+                </div>
               </div>
-              <div className="w-12 h-12 bg-orange-100 rounded-xl flex items-center justify-center">
-                <i className="ri-user-line text-2xl text-orange-500"></i>
-              </div>
-            </div>
-          </div>
 
-          {/* Lunch Employee */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
-            <div className="flex items-center justify-between">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-600 mb-1">Lunch</p>
-                <p className="text-xs text-gray-500 mb-2">Employee</p>
-                <p className="text-2xl sm:text-3xl font-bold text-green-600">{stats.lunch.employee}</p>
-              </div>
-              <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
-                <i className="ri-bowl-line text-2xl text-green-600"></i>
-              </div>
-            </div>
-          </div>
-
-          {/* Lunch Support Staff */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
-            <div className="flex items-center justify-between">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-600 mb-1">Lunch</p>
-                <p className="text-xs text-gray-500 mb-2">Support Staff</p>
-                <p className="text-2xl sm:text-3xl font-bold text-purple-500">{stats.lunch.supportStaff}</p>
-              </div>
-              <div className="w-12 h-12 bg-purple-100 rounded-xl flex items-center justify-center">
-                <i className="ri-tools-line text-2xl text-purple-500"></i>
-              </div>
-            </div>
-          </div>
-
-          {/* Lunch Guest */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
-            <div className="flex items-center justify-between">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-600 mb-1">Lunch</p>
-                <p className="text-xs text-gray-500 mb-2">Guest</p>
-                <p className="text-2xl sm:text-3xl font-bold text-green-500">{stats.lunch.guest}</p>
-              </div>
-              <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
-                <i className="ri-user-line text-2xl text-green-500"></i>
+              {/* Right Side: Total Count */}
+              <div className="text-right pl-6 border-l border-gray-100 flex flex-col justify-center min-w-[120px]">
+                <span className="text-5xl sm:text-6xl font-black text-green-600 block leading-none mb-2">
+                  <AnimatedNumber value={stats.lunch.total} />
+                </span>
+                <span className="text-sm text-gray-400 font-medium uppercase tracking-wide">Total</span>
               </div>
             </div>
           </div>
@@ -320,7 +316,7 @@ export default function Dashboard() {
             <h2 className="text-lg sm:text-xl font-semibold text-gray-900">Company Wise Count</h2>
             <p className="text-sm text-gray-600 mt-1">Breakdown of consumption by company</p>
           </div>
-          
+
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="bg-gray-50">
@@ -384,55 +380,88 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Summary Cards - Updated with Support Staff */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Total Breakfast */}
-          <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl shadow-lg p-6 text-white">
-            <div className="flex items-center justify-between">
-              <div className="flex-1">
-                <p className="text-orange-100 text-sm font-medium mb-1">Total Breakfast Consumed</p>
-                <p className="text-3xl sm:text-4xl font-bold mb-2">{stats.breakfast.total}</p>
-                <div className="flex items-center text-orange-100 text-sm">
-                  <i className="ri-group-line mr-2"></i>
-                  <span>Employee + Support Staff + Guest</span>
+        {/* Summary Cards - Updated Layout */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          {/* Breakfast Employee */}
+          <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl shadow-lg p-4 text-white">
+            <div className="flex flex-col h-full justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-orange-100 text-xs font-medium uppercase tracking-wider">Breakfast</p>
+                  <i className="ri-user-3-line text-orange-200"></i>
                 </div>
-              </div>
-              <div className="w-16 h-16 bg-white/20 rounded-xl flex items-center justify-center">
-                <i className="ri-restaurant-line text-3xl"></i>
+                <p className="text-2xl font-bold">{stats.breakfast.employee}</p>
+                <p className="text-orange-100 text-sm mt-1">Employee</p>
               </div>
             </div>
           </div>
 
-          {/* Total Lunch */}
-          <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl shadow-lg p-6 text-white">
-            <div className="flex items-center justify-between">
-              <div className="flex-1">
-                <p className="text-green-100 text-sm font-medium mb-1">Total Lunch Consumed</p>
-                <p className="text-3xl sm:text-4xl font-bold mb-2">{stats.lunch.total}</p>
-                <div className="flex items-center text-green-100 text-sm">
-                  <i className="ri-group-line mr-2"></i>
-                  <span>Employee + Support Staff + Guest</span>
+          {/* Breakfast Support Staff */}
+          <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl shadow-lg p-4 text-white">
+            <div className="flex flex-col h-full justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-orange-100 text-xs font-medium uppercase tracking-wider">Breakfast</p>
+                  <i className="ri-tools-line text-orange-200"></i>
                 </div>
-              </div>
-              <div className="w-16 h-16 bg-white/20 rounded-xl flex items-center justify-center">
-                <i className="ri-bowl-line text-3xl"></i>
+                <p className="text-2xl font-bold">{stats.breakfast.supportStaff}</p>
+                <p className="text-orange-100 text-sm mt-1">Support Staff</p>
               </div>
             </div>
           </div>
 
-          {/* Support Staff Summary */}
-          <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl shadow-lg p-6 text-white">
-            <div className="flex items-center justify-between">
-              <div className="flex-1">
-                <p className="text-purple-100 text-sm font-medium mb-1">Support Staff Total</p>
-                <p className="text-3xl sm:text-4xl font-bold mb-2">{stats.breakfast.supportStaff + stats.lunch.supportStaff}</p>
-                <div className="flex items-center text-purple-100 text-sm">
-                  <i className="ri-tools-line mr-2"></i>
-                  <span>Breakfast + Lunch</span>
+          {/* Breakfast Guest */}
+          <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl shadow-lg p-4 text-white">
+            <div className="flex flex-col h-full justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-orange-100 text-xs font-medium uppercase tracking-wider">Breakfast</p>
+                  <i className="ri-user-line text-orange-200"></i>
                 </div>
+                <p className="text-2xl font-bold">{stats.breakfast.guest}</p>
+                <p className="text-orange-100 text-sm mt-1">Guest</p>
               </div>
-              <div className="w-16 h-16 bg-white/20 rounded-xl flex items-center justify-center">
-                <i className="ri-tools-line text-3xl"></i>
+            </div>
+          </div>
+
+          {/* Lunch Employee */}
+          <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl shadow-lg p-4 text-white">
+            <div className="flex flex-col h-full justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-green-100 text-xs font-medium uppercase tracking-wider">Lunch</p>
+                  <i className="ri-user-3-line text-green-200"></i>
+                </div>
+                <p className="text-2xl font-bold">{stats.lunch.employee}</p>
+                <p className="text-green-100 text-sm mt-1">Employee</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Lunch Support Staff */}
+          <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl shadow-lg p-4 text-white">
+            <div className="flex flex-col h-full justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-green-100 text-xs font-medium uppercase tracking-wider">Lunch</p>
+                  <i className="ri-tools-line text-green-200"></i>
+                </div>
+                <p className="text-2xl font-bold">{stats.lunch.supportStaff}</p>
+                <p className="text-green-100 text-sm mt-1">Support Staff</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Lunch Guest */}
+          <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl shadow-lg p-4 text-white">
+            <div className="flex flex-col h-full justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-green-100 text-xs font-medium uppercase tracking-wider">Lunch</p>
+                  <i className="ri-user-line text-green-200"></i>
+                </div>
+                <p className="text-2xl font-bold">{stats.lunch.guest}</p>
+                <p className="text-green-100 text-sm mt-1">Guest</p>
               </div>
             </div>
           </div>

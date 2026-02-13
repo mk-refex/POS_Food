@@ -41,7 +41,7 @@ interface HrmsConfig {
 }
 
 export default function AdminPanel() {
-  const [activeTab, setActiveTab] = useState<'users'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'api' | 'sso' | 'smtp'>('users');
   const [users, setUsers] = useState<User[]>([]);
   // Companies removed per request
   // HRMS removed per request
@@ -87,6 +87,31 @@ export default function AdminPanel() {
     headersJson: ''
   });
 
+  // SSO Config – all fields from sso_config table
+  const [ssoConfig, setSsoConfig] = useState({
+    provider: 'google',
+    clientId: '',
+    clientSecret: '',
+    redirectUri: '',
+    frontendBaseUrl: ''
+  });
+  const [ssoSaving, setSsoSaving] = useState(false);
+
+  // SMTP Config
+  const [smtpConfig, setSmtpConfig] = useState({
+    host: '',
+    port: '',
+    secure: true,
+    user: '',
+    password: '',
+    fromEmail: '',
+    fromName: ''
+  });
+  const [smtpSaving, setSmtpSaving] = useState(false);
+  const [testEmail, setTestEmail] = useState('');
+  const [testSmtpLoading, setTestSmtpLoading] = useState(false);
+  const [testSmtpMessage, setTestSmtpMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   useEffect(() => {
     if (!isAdmin()) {
       window.location.href = '/dashboard';
@@ -113,6 +138,59 @@ export default function AdminPanel() {
       } catch {}
     };
     if (activeTab === 'api') loadApi();
+  }, [activeTab]);
+
+  // Load SSO config when tab is "sso"
+  useEffect(() => {
+    if (activeTab !== 'sso') return;
+    setError(''); // clear previous error when opening SSO tab
+    const loadSso = async () => {
+      try {
+        const cfg = await mastersApi.getSsoConfig();
+        if (cfg) {
+          setSsoConfig({
+            provider: cfg.provider || 'google',
+            clientId: cfg.clientId || '',
+            clientSecret: '', // never show masked value in form
+            redirectUri: cfg.redirectUri || '',
+            frontendBaseUrl: cfg.frontendBaseUrl || ''
+          });
+        } else {
+          setSsoConfig({ provider: 'google', clientId: '', clientSecret: '', redirectUri: '', frontendBaseUrl: '' });
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to load SSO config');
+        setSsoConfig({ provider: 'google', clientId: '', clientSecret: '', redirectUri: '', frontendBaseUrl: '' });
+      }
+    };
+    loadSso();
+  }, [activeTab]);
+
+  // Load SMTP config when tab is "smtp"
+  useEffect(() => {
+    if (activeTab !== 'smtp') return;
+    setTestSmtpMessage(null);
+    const loadSmtp = async () => {
+      try {
+        const cfg = await mastersApi.getSmtpConfig();
+        if (cfg) {
+          setSmtpConfig({
+            host: cfg.host || '',
+            port: cfg.port != null ? String(cfg.port) : '',
+            secure: cfg.secure !== false,
+            user: cfg.user || '',
+            password: '',
+            fromEmail: cfg.fromEmail || '',
+            fromName: cfg.fromName || ''
+          });
+        } else {
+          setSmtpConfig({ host: '', port: '', secure: true, user: '', password: '', fromEmail: '', fromName: '' });
+        }
+      } catch {
+        setSmtpConfig({ host: '', port: '', secure: true, user: '', password: '', fromEmail: '', fromName: '' });
+      }
+    };
+    loadSmtp();
   }, [activeTab]);
 
   const loadData = async () => {
@@ -316,7 +394,9 @@ export default function AdminPanel() {
             <nav className="-mb-px flex space-x-8">
               {[
                 { id: 'users', label: 'Users', icon: 'ri-user-line' },
-                { id: 'api', label: 'API Config', icon: 'ri-settings-3-line' }
+                { id: 'api', label: 'API Config', icon: 'ri-settings-3-line' },
+                { id: 'sso', label: 'SSO Config', icon: 'ri-shield-keyhole-line' },
+                { id: 'smtp', label: 'SMTP Config', icon: 'ri-mail-line' }
               ].map((tab) => (
                 <button
                   key={tab.id}
@@ -486,6 +566,307 @@ export default function AdminPanel() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* SSO Config Tab */}
+        {activeTab === 'sso' && (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <h2 className="text-xl font-semibold text-gray-900">SSO Configuration (Google)</h2>
+            </div>
+            <p className="text-sm text-gray-600">
+              Configure Google Sign-In for the employee portal. Employees sign in with their Google account; their email must match an active employee record.
+            </p>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+              <div className="p-6 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Provider</label>
+                    <input
+                      type="text"
+                      value={ssoConfig.provider}
+                      onChange={(e) => setSsoConfig({ ...ssoConfig, provider: e.target.value })}
+                      placeholder="google"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                    />
+                    <p className="mt-1 text-xs text-gray-500">e.g. google – must match OAuth provider.</p>
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Client ID</label>
+                    <input
+                      type="text"
+                      value={ssoConfig.clientId}
+                      onChange={(e) => setSsoConfig({ ...ssoConfig, clientId: e.target.value })}
+                      placeholder="xxxxx.apps.googleusercontent.com"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Client Secret</label>
+                    <input
+                      type="password"
+                      value={ssoConfig.clientSecret}
+                      onChange={(e) => setSsoConfig({ ...ssoConfig, clientSecret: e.target.value })}
+                      placeholder="Leave blank to keep existing"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Redirect URI</label>
+                    <input
+                      type="url"
+                      value={ssoConfig.redirectUri}
+                      onChange={(e) => setSsoConfig({ ...ssoConfig, redirectUri: e.target.value })}
+                      placeholder="https://api.example.com/api/employee-auth/google/callback"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                    />
+                    <p className="mt-1 text-xs text-gray-500">Must match the redirect URI configured in Google Cloud Console.</p>
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Frontend base URL</label>
+                    <input
+                      type="url"
+                      value={ssoConfig.frontendBaseUrl}
+                      onChange={(e) => setSsoConfig({ ...ssoConfig, frontendBaseUrl: e.target.value })}
+                      placeholder="https://your-app.example.com"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                    />
+                    <p className="mt-1 text-xs text-gray-500">Used for redirect after Google sign-in. Defaults to request origin if empty.</p>
+                  </div>
+                </div>
+                <div className="flex justify-end items-center gap-4 pt-4">
+                  {activeTab === 'sso' && error && (
+                    <span className="text-red-600 text-sm flex-1">{error}</span>
+                  )}
+                  <button
+                    type="button"
+                    disabled={ssoSaving}
+                    onClick={async () => {
+                      try {
+                        setSsoSaving(true);
+                        setError('');
+                        setSuccess('');
+                        const provider = (ssoConfig.provider || 'google').trim() || 'google';
+                        const clientId = (ssoConfig.clientId || '').trim();
+                        const clientSecret = ssoConfig.clientSecret?.trim();
+                        const redirectUri = (ssoConfig.redirectUri || '').trim() || null;
+                        const frontendBaseUrl = (ssoConfig.frontendBaseUrl || '').trim() || null;
+                        const payload: Record<string, string | null> = {
+                          provider,
+                          clientId,
+                          redirectUri,
+                          frontendBaseUrl
+                        };
+                        if (clientSecret !== undefined && clientSecret !== '') {
+                          payload.clientSecret = clientSecret;
+                        }
+                        await mastersApi.updateSsoConfig(payload);
+                        setSuccess('SSO configuration saved');
+                        const cfg = await mastersApi.getSsoConfig();
+                        if (cfg) {
+                          setSsoConfig({
+                            provider: cfg.provider || 'google',
+                            clientId: cfg.clientId || '',
+                            clientSecret: '',
+                            redirectUri: cfg.redirectUri || '',
+                            frontendBaseUrl: cfg.frontendBaseUrl || ''
+                          });
+                        }
+                      } catch (err: any) {
+                        setError(err?.message || 'Failed to save SSO config');
+                      } finally {
+                        setSsoSaving(false);
+                      }
+                    }}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                  >
+                    {ssoSaving ? 'Saving...' : 'Save SSO Config'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* SMTP Config Tab */}
+        {activeTab === 'smtp' && (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <h2 className="text-xl font-semibold text-gray-900">SMTP Configuration</h2>
+            </div>
+            <p className="text-sm text-gray-600">
+              Configure outgoing email (e.g. for notifications). Save the configuration first, then use &quot;Test SMTP&quot; to send a test email.
+            </p>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+              <form
+                className="p-6 space-y-4"
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  try {
+                    setSmtpSaving(true);
+                    setError('');
+                    setSuccess('');
+                    const payload: any = {
+                      host: smtpConfig.host.trim(),
+                      port: smtpConfig.port.trim() === '' ? null : Number(smtpConfig.port) || null,
+                      secure: smtpConfig.secure,
+                      user: smtpConfig.user.trim(),
+                      fromEmail: smtpConfig.fromEmail.trim(),
+                      fromName: smtpConfig.fromName.trim()
+                    };
+                    if (smtpConfig.password) payload.password = smtpConfig.password;
+                    await mastersApi.updateSmtpConfig(payload);
+                    setSuccess('SMTP configuration saved');
+                    const cfg = await mastersApi.getSmtpConfig();
+                    if (cfg) {
+                      setSmtpConfig({
+                        host: cfg.host || '',
+                        port: cfg.port != null ? String(cfg.port) : '',
+                        secure: cfg.secure !== false,
+                        user: cfg.user || '',
+                        password: '',
+                        fromEmail: cfg.fromEmail || '',
+                        fromName: cfg.fromName || ''
+                      });
+                    }
+                  } catch (err: any) {
+                    setError(err?.message || 'Failed to save SMTP config');
+                  } finally {
+                    setSmtpSaving(false);
+                  }
+                }}
+              >
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Host</label>
+                    <input
+                      type="text"
+                      value={smtpConfig.host}
+                      onChange={(e) => setSmtpConfig({ ...smtpConfig, host: e.target.value })}
+                      placeholder="smtp.gmail.com"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Port</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={smtpConfig.port}
+                      onChange={(e) => setSmtpConfig({ ...smtpConfig, port: e.target.value })}
+                      placeholder="465 or 587"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    />
+                    <p className="mt-1 text-xs text-gray-500">Usually 465 (SSL) or 587 (TLS). Leave empty for default.</p>
+                  </div>
+                  <div className="flex items-center gap-2 pt-2">
+                    <input
+                      type="checkbox"
+                      id="smtp-secure"
+                      checked={smtpConfig.secure}
+                      onChange={(e) => setSmtpConfig({ ...smtpConfig, secure: e.target.checked })}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <label htmlFor="smtp-secure" className="text-sm font-medium text-gray-700">Use SSL/TLS (secure)</label>
+                  </div>
+                  <div />
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">User / Login</label>
+                    <input
+                      type="text"
+                      value={smtpConfig.user}
+                      onChange={(e) => setSmtpConfig({ ...smtpConfig, user: e.target.value })}
+                      placeholder="your@email.com"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                    <input
+                      type="password"
+                      value={smtpConfig.password}
+                      onChange={(e) => setSmtpConfig({ ...smtpConfig, password: e.target.value })}
+                      placeholder="Leave blank to keep existing"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">From Email</label>
+                    <input
+                      type="email"
+                      value={smtpConfig.fromEmail}
+                      onChange={(e) => setSmtpConfig({ ...smtpConfig, fromEmail: e.target.value })}
+                      placeholder="noreply@yourdomain.com"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">From Name</label>
+                    <input
+                      type="text"
+                      value={smtpConfig.fromName}
+                      onChange={(e) => setSmtpConfig({ ...smtpConfig, fromName: e.target.value })}
+                      placeholder="POS Food"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end pt-4">
+                  <button type="submit" disabled={smtpSaving} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50">
+                    {smtpSaving ? 'Saving...' : 'Save SMTP Configuration'}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Test SMTP */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+              <div className="p-6">
+                <h3 className="text-lg font-medium text-gray-900 mb-2">Test SMTP</h3>
+                <p className="text-sm text-gray-600 mb-4">Send a test email to verify your SMTP settings. Save the configuration above first.</p>
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="flex-1 min-w-[200px]">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Test email address</label>
+                    <input
+                      type="email"
+                      value={testEmail}
+                      onChange={(e) => { setTestEmail(e.target.value); setTestSmtpMessage(null); }}
+                      placeholder="recipient@example.com"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={testSmtpLoading}
+                    onClick={async () => {
+                      if (!testEmail.trim()) {
+                        setTestSmtpMessage({ type: 'error', text: 'Enter a test email address' });
+                        return;
+                      }
+                      try {
+                        setTestSmtpLoading(true);
+                        setTestSmtpMessage(null);
+                        await mastersApi.testSmtp(testEmail.trim());
+                        setTestSmtpMessage({ type: 'success', text: 'Test email sent successfully. Check the inbox (and spam).' });
+                      } catch (err: any) {
+                        setTestSmtpMessage({ type: 'error', text: err?.message || 'Failed to send test email' });
+                      } finally {
+                        setTestSmtpLoading(false);
+                      }
+                    }}
+                    className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                  >
+                    {testSmtpLoading ? 'Sending...' : 'Test SMTP'}
+                  </button>
+                </div>
+                {testSmtpMessage && (
+                  <p className={`mt-3 text-sm ${testSmtpMessage.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                    {testSmtpMessage.text}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
         )}

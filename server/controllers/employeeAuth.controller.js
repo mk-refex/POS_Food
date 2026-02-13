@@ -1,0 +1,451 @@
+import { z } from 'zod';
+import { Op } from 'sequelize';
+import { Employee } from '../models/index.js';
+import { signToken } from '../middleware/auth.js';
+
+// In-memory OTP store: key = mobileNumber (normalized) or employeeId, value = { otp, expiresAt, employeeId }
+const otpStore = new Map();
+const OTP_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
+const DEV_OTP = process.env.EMPLOYEE_DEV_OTP || '123456'; // For development; set EMPLOYEE_DEV_OTP or use 123456
+
+function generateOTP() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function normalizeMobile(mobile) {
+  return (mobile || '').replace(/\D/g, '').slice(-10);
+}
+
+// In-memory locks for self-bill to avoid concurrent duplicate processing
+const selfBillLocks = new Set();
+
+export async function requestOtp(req, res) {
+  const schema = z.object({
+    mobileNumber: z.string().min(10).optional(),
+    employeeId: z.string().min(1).optional(),
+  }).refine((d) => d.mobileNumber || d.employeeId, { message: 'Provide mobileNumber or employeeId' });
+
+  const parse = schema.safeParse(req.body);
+  if (!parse.success) {
+    return res.status(400).json({ message: 'Validation failed', errors: parse.error.flatten().fieldErrors });
+  }
+
+  const { mobileNumber, employeeId } = parse.data;
+  try {
+    const where = {};
+    if (employeeId) where.employeeId = employeeId;
+    else if (mobileNumber) where.mobileNumber = { [Op.like]: `%${normalizeMobile(mobileNumber)}` };
+
+    const employee = await Employee.findOne({ where, attributes: ['id', 'employeeId', 'employeeName', 'mobileNumber'] });
+    if (!employee) {
+      return res.status(404).json({ message: 'Employee not found. Check mobile number or employee ID.' });
+    }
+
+    const otp = process.env.NODE_ENV === 'production' ? generateOTP() : DEV_OTP;
+    const key = employeeId ? employee.employeeId : normalizeMobile(employee.mobileNumber) || employee.employeeId;
+    otpStore.set(key, { otp, expiresAt: Date.now() + OTP_EXPIRY_MS, employeeId: employee.employeeId });
+
+    // In production you would send SMS here (e.g. Twilio). For dev, we return masked message.
+    const sent = process.env.NODE_ENV === 'production';
+    return res.json({
+      message: sent ? 'OTP sent to your registered mobile number' : 'Use OTP 123456 for development (or set EMPLOYEE_DEV_OTP)',
+      // Do not send OTP in response in production
+      ...(process.env.NODE_ENV !== 'production' ? { devOtp: otp } : {}),
+    });
+  } catch (error) {
+    console.error('Employee request OTP error:', error);
+    return res.status(500).json({ message: 'Failed to send OTP' });
+  }
+}
+
+const verifyOtpSchema = z.object({
+  mobileNumber: z.string().min(10).optional(),
+  employeeId: z.string().min(1).optional(),
+  otp: z.string().length(6),
+}).refine((d) => d.mobileNumber || d.employeeId, { message: 'Provide mobileNumber or employeeId' });
+
+export async function verifyOtp(req, res) {
+  const parse = verifyOtpSchema.safeParse(req.body);
+  if (!parse.success) {
+    return res.status(400).json({ message: 'Validation failed', errors: parse.error.flatten().fieldErrors });
+  }
+
+  const { mobileNumber, employeeId, otp } = parse.data;
+  const key = employeeId ? employeeId : normalizeMobile(mobileNumber);
+  const stored = otpStore.get(key);
+  if (!stored) {
+    return res.status(400).json({ message: 'OTP expired or not requested. Please request a new OTP.' });
+  }
+  if (Date.now() > stored.expiresAt) {
+    otpStore.delete(key);
+    return res.status(400).json({ message: 'OTP expired. Please request a new OTP.' });
+  }
+  if (stored.otp !== otp) {
+    return res.status(401).json({ message: 'Invalid OTP' });
+  }
+  otpStore.delete(key);
+
+  try {
+    const employee = await Employee.findOne({
+      where: { employeeId: stored.employeeId, isActive: true },
+      attributes: ['id', 'employeeId', 'employeeName', 'companyName', 'entity', 'mobileNumber'],
+    });
+    if (!employee) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
+
+    const token = signToken({
+      role: 'employee',
+      employeeId: employee.employeeId,
+      employeeName: employee.employeeName,
+      companyName: employee.companyName || null,
+    });
+
+    return res.json({
+      token,
+      employee: {
+        employeeId: employee.employeeId,
+        employeeName: employee.employeeName,
+        companyName: employee.companyName,
+        entity: employee.entity,
+      },
+    });
+  } catch (error) {
+    console.error('Employee verify OTP error:', error);
+    return res.status(500).json({ message: 'Login failed' });
+  }
+}
+
+const qrLoginSchema = z.object({
+  employeeId: z.string().min(1),
+});
+
+export async function qrLogin(req, res) {
+  const parse = qrLoginSchema.safeParse(req.body);
+  if (!parse.success) {
+    return res.status(400).json({ message: 'Validation failed', errors: parse.error.flatten().fieldErrors });
+  }
+
+  const { employeeId } = parse.data;
+  try {
+    const employee = await Employee.findOne({
+      where: { employeeId, isActive: true },
+      attributes: ['id', 'employeeId', 'employeeName', 'companyName', 'entity', 'mobileNumber', 'qrCode'],
+    });
+    if (!employee) {
+      return res.status(404).json({ message: 'Employee not found or inactive' });
+    }
+
+    const token = signToken({
+      role: 'employee',
+      employeeId: employee.employeeId,
+      employeeName: employee.employeeName,
+      companyName: employee.companyName || null,
+    });
+
+    return res.json({
+      token,
+      employee: {
+        employeeId: employee.employeeId,
+        employeeName: employee.employeeName,
+        companyName: employee.companyName,
+        entity: employee.entity,
+      },
+    });
+  } catch (error) {
+    console.error('Employee QR login error:', error);
+    return res.status(500).json({ message: 'Login failed' });
+  }
+}
+
+// Google SSO: redirect to Google OAuth
+export async function googleRedirect(req, res) {
+  try {
+    const { SsoConfig } = await import('../models/index.js');
+    const config = await SsoConfig.findOne({ where: { provider: 'google' } });
+    if (!config?.clientId) {
+      return res.status(400).json({ message: 'Google SSO is not configured. Contact admin.' });
+    }
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const redirectUri = (config.redirectUri && config.redirectUri.trim())
+      ? config.redirectUri.trim()
+      : `${baseUrl}/api/employee-auth/google/callback`;
+    const state = (req.query.state || config.frontendBaseUrl || '').toString().replace(/\/$/, '');
+    const params = new URLSearchParams({
+      client_id: config.clientId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: 'openid email profile',
+      access_type: 'offline',
+      prompt: 'select_account',
+      ...(state ? { state } : {}),
+    });
+    return res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+  } catch (error) {
+    console.error('Google redirect error:', error);
+    return res.status(500).json({ message: 'SSO not available' });
+  }
+}
+
+// Google SSO: callback – exchange code, get email, find employee, issue JWT, redirect to frontend
+export async function googleCallback(req, res) {
+  const { code, state } = req.query;
+  if (!code) {
+    return res.redirect(state ? `${state}/employee/login?error=no_code` : '/employee/login?error=no_code');
+  }
+  try {
+    const { SsoConfig, Employee } = await import('../models/index.js');
+    const config = await SsoConfig.findOne({ where: { provider: 'google' } });
+    if (!config?.clientId || !config.clientSecret) {
+      return res.redirect(state ? `${state}/employee/login?error=not_configured` : '/employee/login?error=not_configured');
+    }
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const redirectUri = (config.redirectUri && config.redirectUri.trim())
+      ? config.redirectUri.trim()
+      : `${baseUrl}/api/employee-auth/google/callback`;
+
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code',
+      }),
+    });
+    if (!tokenRes.ok) {
+      const err = await tokenRes.text();
+      console.error('Google token error:', err);
+      return res.redirect(state ? `${state}/employee/login?error=token_failed` : '/employee/login?error=token_failed');
+    }
+    const tokens = await tokenRes.json();
+    const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    });
+    if (!userRes.ok) {
+      return res.redirect(state ? `${state}/employee/login?error=profile_failed` : '/employee/login?error=profile_failed');
+    }
+    const profile = await userRes.json();
+    const email = (profile.email || '').toLowerCase().trim();
+    if (!email) {
+      return res.redirect(state ? `${state}/employee/login?error=no_email` : '/employee/login?error=no_email');
+    }
+
+    const employee = await Employee.findOne({
+      where: { email, isActive: true },
+      attributes: ['id', 'employeeId', 'employeeName', 'companyName', 'entity', 'email'],
+    });
+    if (!employee) {
+      return res.redirect(state ? `${state}/employee/login?error=employee_not_found` : '/employee/login?error=employee_not_found');
+    }
+
+    const signToken = (await import('../middleware/auth.js')).signToken;
+    const token = signToken({
+      role: 'employee',
+      employeeId: employee.employeeId,
+      employeeName: employee.employeeName,
+      companyName: employee.companyName || null,
+    });
+    const employeePayload = {
+      employeeId: employee.employeeId,
+      employeeName: employee.employeeName,
+      companyName: employee.companyName,
+      entity: employee.entity,
+    };
+    const frontendBase = (state || config.frontendBaseUrl || '').replace(/\/$/, '');
+    const target = frontendBase
+      ? `${frontendBase}/employee/callback?token=${encodeURIComponent(token)}&employee=${encodeURIComponent(JSON.stringify(employeePayload))}`
+      : `/employee/callback?token=${encodeURIComponent(token)}&employee=${encodeURIComponent(JSON.stringify(employeePayload))}`;
+    return res.redirect(target);
+  } catch (error) {
+    console.error('Google callback error:', error);
+    const state = req.query.state || '';
+    return res.redirect(state ? `${state}/employee/login?error=login_failed` : '/employee/login?error=login_failed');
+  }
+}
+
+/** Preview self-bill: returns employee info, suggested meal and price, monthly summary */
+export async function selfBillPreview(req, res) {
+  try {
+    const employeeId = String(req.query.employeeId || req.query.id || req.query.employee || '').trim();
+    if (!employeeId) return res.status(400).json({ message: 'employeeId required' });
+    const { Employee, PriceMaster, Transaction } = await import('../models/index.js');
+    const employee = await Employee.findOne({
+      where: { employeeId, isActive: true },
+      attributes: ['employeeId', 'employeeName', 'companyName', 'entity', 'email', 'mobileNumber'],
+    });
+    if (!employee) return res.status(404).json({ message: 'Employee not found' });
+
+    // determine meal by server local time
+    const now = new Date();
+    const h = now.getHours();
+    let meal = 'lunch';
+    if (h >= 6 && h < 10) meal = 'breakfast';
+    else if (h >= 12 && h < 15) meal = 'lunch';
+    else meal = 'lunch';
+
+    const priceMaster = await PriceMaster.findOne({ where: { isActive: true } });
+    const price = meal === 'breakfast' ? Number(priceMaster?.employeeBreakfast || 20) : Number(priceMaster?.employeeLunch || 48);
+
+    const { getMonthlySummaryForCustomer } = await import('../services/transactionEmail.js');
+    const monthlySummary = await getMonthlySummaryForCustomer('employee', employee.employeeId, now.toISOString().split('T')[0]);
+
+    // compute per-day totals to determine warnings (quantity requested can be provided)
+    const qtyReq = Math.max(1, Number(req.query.quantity || 1));
+    let warnings = {};
+    try {
+      const prior = await Transaction.findAll({
+        where: { date: now.toISOString().split('T')[0], customerType: 'employee', customerId: employee.employeeId },
+      });
+      const totals = prior.reduce((acc, t) => {
+        for (const it of t.items || []) {
+          if (it.isException) continue;
+          if (it.name === 'Breakfast') acc.breakfast += Number(it.quantity || 0);
+          if (it.name === 'Lunch') acc.lunch += Number(it.quantity || 0);
+        }
+        return acc;
+      }, { breakfast: 0, lunch: 0 });
+      if (meal === 'breakfast' && totals.breakfast + qtyReq > 1) warnings.breakfastExceeded = true;
+      if (meal === 'lunch' && totals.lunch + qtyReq > 1) warnings.lunchExceeded = true;
+      // detect prior exception entries for this meal
+      const priorExceptionExists = prior.some((t) =>
+        (t.items || []).some((it) => String(it.name).toLowerCase() === meal && !!it.isException)
+      );
+      if (priorExceptionExists) warnings.priorException = true;
+    } catch (e) {
+      // ignore
+    }
+
+    return res.json({
+      employee: {
+        employeeId: employee.employeeId,
+        employeeName: employee.employeeName,
+        companyName: employee.companyName,
+        email: employee.email,
+      },
+      meal,
+      price,
+      monthlySummary,
+      warnings,
+    });
+  } catch (e) {
+    console.error('selfBillPreview error:', e?.message || e);
+    return res.status(500).json({ message: 'Failed to preview self-bill' });
+  }
+}
+
+/** Create self-bill transaction for given employeeId */
+export async function selfBill(req, res) {
+  try {
+    const body = req.body || {};
+    const employeeId = String(body.employeeId || body.id || '').trim();
+    if (!employeeId) return res.status(400).json({ message: 'employeeId required' });
+    const { Employee, PriceMaster, Transaction } = await import('../models/index.js');
+    const employee = await Employee.findOne({
+      where: { employeeId, isActive: true },
+      attributes: ['employeeId', 'employeeName', 'companyName', 'email'],
+    });
+    if (!employee) return res.status(404).json({ message: 'Employee not found' });
+
+    // determine meal
+    const now = new Date();
+    const h = now.getHours();
+    let meal = 'lunch';
+    if (h >= 6 && h < 10) meal = 'breakfast';
+    else if (h >= 12 && h < 15) meal = 'lunch';
+    else meal = 'lunch';
+
+    const priceMaster = await PriceMaster.findOne({ where: { isActive: true } });
+    const price = meal === 'breakfast' ? Number(priceMaster?.employeeBreakfast || 20) : Number(priceMaster?.employeeLunch || 48);
+
+    const date = now.toISOString().split('T')[0];
+    const time = now.toLocaleTimeString();
+
+    const qty = Math.max(1, Number(body.quantity || 1));
+    const items = [{
+      name: meal === 'breakfast' ? 'Breakfast' : 'Lunch',
+      quantity: qty,
+      actualPrice: price,
+    }];
+
+    // mark as exception when employee explicitly forced an exception (via modal)
+    if (body.forceException) {
+      items[0].isException = true;
+    }
+
+    // Lock per employee/date/meal/qty to avoid concurrent duplicate processing
+    const lockKey = `${employee.employeeId}:${date}:${meal}:${qty}`;
+    if (selfBillLocks.has(lockKey)) {
+      // Someone else is processing same bill
+      return res.status(200).json({ message: 'Duplicate request', duplicate: true });
+    }
+    selfBillLocks.add(lockKey);
+
+    try {
+      // Dedup: avoid duplicate transactions within short window (compare items)
+      const tenSecondsAgo = new Date(Date.now() - 10 * 1000);
+      const existing = await Transaction.findOne({
+        where: {
+          customerType: 'employee',
+          customerId: employee.employeeId,
+          date,
+          createdAt: { [Op.gte]: tenSecondsAgo },
+        },
+        order: [['id', 'DESC']],
+      });
+      if (existing) {
+        const existingItems = JSON.stringify(existing.items || []);
+        const newItems = JSON.stringify(items || []);
+        if (existingItems === newItems) {
+          return res.status(200).json({ transaction: existing.toJSON(), duplicate: true });
+        }
+      }
+
+      const trx = await Transaction.create({
+        customerType: 'employee',
+        customerId: employee.employeeId,
+        customerName: employee.employeeName,
+        companyName: employee.companyName || null,
+        date,
+        time,
+        items,
+        totalItems: qty,
+        totalAmount: Math.round(price * qty),
+        userId: req.user?.userId ?? (body.userId ? Number(body.userId) : null),
+      });
+
+      // send notification email (non-blocking) — same as createTransaction flow
+      const { getMonthlySummaryForCustomer, sendTransactionNotificationEmail } = await import('../services/transactionEmail.js');
+      setImmediate(async () => {
+        try {
+          const monthlySummary = await getMonthlySummaryForCustomer('employee', employee.employeeId, date);
+          await sendTransactionNotificationEmail(trx.toJSON(), employee.email, employee.employeeName || 'Employee', monthlySummary);
+        } catch (e) {
+          console.error('selfBill send email error:', e?.message || e);
+        }
+      });
+
+      return res.status(201).json({ transaction: trx.toJSON() });
+    } finally {
+      selfBillLocks.delete(lockKey);
+    }
+
+    // send notification email (non-blocking) — same as createTransaction flow
+    const { getMonthlySummaryForCustomer, sendTransactionNotificationEmail } = await import('../services/transactionEmail.js');
+    setImmediate(async () => {
+      try {
+        const monthlySummary = await getMonthlySummaryForCustomer('employee', employee.employeeId, date);
+        await sendTransactionNotificationEmail(trx.toJSON(), employee.email, employee.employeeName || 'Employee', monthlySummary);
+      } catch (e) {
+        console.error('selfBill send email error:', e?.message || e);
+      }
+    });
+
+    return res.status(201).json({ transaction: trx.toJSON() });
+  } catch (e) {
+    console.error('selfBill error:', e?.message || e);
+    return res.status(500).json({ message: 'Failed to create self-bill' });
+  }
+}

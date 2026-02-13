@@ -1,5 +1,5 @@
 import express from 'express';
-import { authRequired } from '../middleware/auth.js';
+import { authRequired, requireAdmin } from '../middleware/auth.js';
 import {
   getEmployees,
   createEmployee,
@@ -17,6 +17,7 @@ import {
   updatePriceMaster
 } from '../controllers/masters.controller.js';
 import { fetchHrmsEmployees, getApiConfig } from '../controllers/admin.controller.js';
+import { listMenus, upsertMenu, deleteMenu } from '../controllers/menu.controller.js';
 
 const router = express.Router();
 
@@ -47,5 +48,13 @@ router.get('/api-config', authRequired, getApiConfig);
 
 // HRMS sync route (available to all authenticated users)
 router.get('/hrms/employees/active', authRequired, fetchHrmsEmployees);
+
+// Menu routes
+// - GET: any authenticated user can list published menus
+// - POST: allow any authenticated user to submit/update a menu (admins can publish directly)
+// - DELETE: only admin can remove menus
+router.get('/menus', authRequired, listMenus);
+router.post('/menus', authRequired, upsertMenu);
+router.delete('/menus', authRequired, requireAdmin, deleteMenu);
 
 export default router;

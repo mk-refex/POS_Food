@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Layout from "../../components/feature/Layout";
 import { apiFetch, mastersApi, isAdmin } from "../../api/client";
+import { ratingTextClass, ratingBadgeText } from "../../utils/ratingColor";
 
 // Align client types with server's /transactions response
 interface TransactionRecord {
@@ -54,6 +55,28 @@ interface PriceMaster {
   };
 }
 
+interface FeedbackReportRecord {
+  id: number;
+  employeeId: string;
+  employeeName?: string | null;
+  companyName?: string | null;
+  date: string;
+  mealType: "breakfast" | "lunch";
+  rating: number;
+  comments?: string | null;
+  createdAt?: string | Date | null;
+}
+
+interface FeedbackSummary {
+  total: number;
+  avgRating: number | null;
+  byMeal: {
+    breakfast: { count: number; avgRating: number | null };
+    lunch: { count: number; avgRating: number | null };
+  };
+  byRating: { [rating: string]: number };
+}
+
 export default function Reports() {
   const [activeTab, setActiveTab] = useState("employee");
   const [startDate, setStartDate] = useState("");
@@ -93,6 +116,23 @@ export default function Reports() {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
 
+  const [feedbackRecords, setFeedbackRecords] = useState<FeedbackReportRecord[]>([]);
+  const [feedbackSummary, setFeedbackSummary] = useState<FeedbackSummary | null>(null);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [feedbackPage, setFeedbackPage] = useState(1);
+  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
+  const [feedbackModalItem, setFeedbackModalItem] = useState<FeedbackReportRecord | null>(null);
+  const FEEDBACK_PAGE_SIZE = 10;
+
+  const feedbackTotalPages = useMemo(
+    () => Math.max(1, Math.ceil(feedbackRecords.length / FEEDBACK_PAGE_SIZE)),
+    [feedbackRecords.length]
+  );
+  const paginatedFeedbackRecords = useMemo(() => {
+    const start = (feedbackPage - 1) * FEEDBACK_PAGE_SIZE;
+    return feedbackRecords.slice(start, start + FEEDBACK_PAGE_SIZE);
+  }, [feedbackRecords, feedbackPage]);
+
   // Load data on component mount
   useEffect(() => {
     const initializeData = async () => {
@@ -105,7 +145,8 @@ export default function Reports() {
       await Promise.all([
         loadReportData(loadedUsers, loadedPriceMaster),
         loadEmployees(),
-        loadSupportStaff()
+        loadSupportStaff(),
+        loadFeedbackReport()
       ]);
     };
     initializeData();
@@ -179,7 +220,7 @@ export default function Reports() {
     if (employees.length > 0 && originalReportData.length > 0) {
       const uniqueEmployeeIds = new Set<string>();
       const employeeMap = new Map<string, { employeeId: string; employeeName: string }>();
-      
+
       originalReportData.forEach((record) => {
         if (record.employeeId) {
           uniqueEmployeeIds.add(record.employeeId);
@@ -193,10 +234,10 @@ export default function Reports() {
       });
 
       // Match with full employee data
-      const filteredEmployees = employees.filter((emp) => 
+      const filteredEmployees = employees.filter((emp) =>
         uniqueEmployeeIds.has(emp.employeeId)
       ).sort((a, b) => (a.employeeName || '').localeCompare(b.employeeName || ''));
-      
+
       // If we have matches, use them; otherwise use transaction data
       if (filteredEmployees.length > 0) {
         setTransactionEmployees(filteredEmployees);
@@ -252,6 +293,26 @@ export default function Reports() {
     }
   };
 
+  const loadFeedbackReport = async () => {
+    try {
+      setFeedbackLoading(true);
+      const params = new URLSearchParams();
+      if (startDate) params.set("startDate", startDate);
+      if (endDate) params.set("endDate", endDate);
+      const url = params.toString() ? `/reports/feedback?${params.toString()}` : "/reports/feedback";
+      const res: { list?: FeedbackReportRecord[]; summary?: FeedbackSummary } = await apiFetch(url);
+      setFeedbackRecords(Array.isArray(res.list) ? res.list : []);
+      setFeedbackSummary(res.summary ?? null);
+      setFeedbackPage(1);
+    } catch (error) {
+      console.error("Error loading feedback reports:", error);
+      setFeedbackRecords([]);
+      setFeedbackSummary(null);
+    } finally {
+      setFeedbackLoading(false);
+    }
+  };
+
   const loadPriceMaster = async (): Promise<PriceMaster> => {
     try {
       const priceMasterData = await mastersApi.getPriceMaster();
@@ -270,10 +331,10 @@ export default function Reports() {
   const loadReportData = async (usersList?: User[], priceMasterData?: PriceMaster) => {
     try {
       const bills: TransactionRecord[] = await apiFetch("/transactions");
-      
+
       // Use provided users list or current users state
       const usersToUse = usersList || users;
-      
+
       // Use provided price master or current price master state
       const priceMasterToUse = priceMasterData || priceMaster;
 
@@ -323,7 +384,7 @@ export default function Reports() {
       const uniqueEmployeeIds = new Set<string>();
       const uniqueCompanies = new Set<string>();
       const employeeMap = new Map<string, { employeeId: string; employeeName: string }>();
-      
+
       employeeData.forEach((record) => {
         // Include both employees and guests (GUEST is also valid)
         if (record.employeeId) {
@@ -344,7 +405,7 @@ export default function Reports() {
       // Match employee IDs with full employee data if available, otherwise use transaction data
       let filteredEmployees: any[] = [];
       if (employees.length > 0) {
-        filteredEmployees = employees.filter((emp) => 
+        filteredEmployees = employees.filter((emp) =>
           uniqueEmployeeIds.has(emp.employeeId)
         ).sort((a, b) => (a.employeeName || '').localeCompare(b.employeeName || ''));
       } else {
@@ -357,7 +418,7 @@ export default function Reports() {
           }))
           .sort((a, b) => (a.employeeName || '').localeCompare(b.employeeName || ''));
       }
-      
+
       setTransactionEmployees(filteredEmployees);
       setTransactionCompanies(Array.from(uniqueCompanies).sort());
 
@@ -524,6 +585,9 @@ export default function Reports() {
       await loadUsers();
     }
 
+    // Refresh feedback summary/list for the selected date range
+    await loadFeedbackReport();
+
     // Reload price master to ensure we have the latest values
     const currentPriceMaster = await loadPriceMaster();
 
@@ -683,17 +747,17 @@ export default function Reports() {
         filteredCompanyData = Object.values(companyStats).sort(
           (a, b) => b.totalAmount - a.totalAmount
         );
-        
+
         // Update original data when filtering by date range
         setOriginalReportData(employeeData);
         setOriginalSupportStaffReportData(supportStaffData);
         setOriginalCompanyReportData(filteredCompanyData);
-        
+
         // Extract unique employees and companies from filtered transactions
         const uniqueEmployeeIds = new Set<string>();
         const uniqueCompanies = new Set<string>();
         const employeeMap = new Map<string, { employeeId: string; employeeName: string }>();
-        
+
         employeeData.forEach((record) => {
           if (record.employeeId && record.employeeId !== "GUEST") {
             uniqueEmployeeIds.add(record.employeeId);
@@ -712,7 +776,7 @@ export default function Reports() {
         // Match employee IDs with full employee data if available, otherwise use transaction data
         let filteredEmployees: any[] = [];
         if (employees.length > 0) {
-          filteredEmployees = employees.filter((emp) => 
+          filteredEmployees = employees.filter((emp) =>
             uniqueEmployeeIds.has(emp.employeeId)
           ).sort((a, b) => (a.employeeName || '').localeCompare(b.employeeName || ''));
         } else {
@@ -725,7 +789,7 @@ export default function Reports() {
             }))
             .sort((a, b) => (a.employeeName || '').localeCompare(b.employeeName || ''));
         }
-        
+
         setTransactionEmployees(filteredEmployees);
         setTransactionCompanies(Array.from(uniqueCompanies).sort());
       } catch (err) {
@@ -821,7 +885,7 @@ export default function Reports() {
     setSortKey('');
     setSortDir('ASC');
     setCurrentPage(1);
-    
+
     // Ensure users are loaded if admin
     let loadedUsers: User[] = [];
     if (isAdmin()) {
@@ -831,9 +895,12 @@ export default function Reports() {
         loadedUsers = users;
       }
     }
-    
+
     // Reload original data with users and current price master
-    await loadReportData(loadedUsers, priceMaster);
+    await Promise.all([
+      loadReportData(loadedUsers, priceMaster),
+      loadFeedbackReport()
+    ]);
   };
 
   // Pagination helper functions
@@ -865,20 +932,20 @@ export default function Reports() {
       await apiFetch(`/transactions/${transactionId}`, {
         method: 'DELETE',
       });
-      
+
       // Optimistically remove from current view immediately
       setReportData(prev => prev.filter(record => record.id !== transactionId));
       setSupportStaffReportData(prev => prev.filter(record => record.id !== transactionId));
-      
+
       // Reset to first page
       setCurrentPage(1);
-      
+
       // Reload price master to ensure we have the latest values
       const currentPriceMaster = await loadPriceMaster();
-      
+
       // Fetch fresh data from server
       const bills: TransactionRecord[] = await apiFetch("/transactions");
-      
+
       // Process fresh data (same logic as loadReportData)
       const employeeData = bills
         .filter((bill) => bill.customerType === "employee" || bill.customerType === "guest")
@@ -1108,6 +1175,18 @@ export default function Reports() {
         "Amount",
       ];
       fileName = "support-staff-report";
+    } else if (activeTab === "feedback") {
+      dataToExport = feedbackRecords;
+      headers = [
+        "Date",
+        "Meal Type",
+        "Employee ID",
+        "Employee Name",
+        "Company",
+        "Rating",
+        "Comments",
+      ];
+      fileName = "feedback-report";
     } else {
       dataToExport = companyReportData;
       headers = [
@@ -1161,6 +1240,19 @@ export default function Reports() {
           ];
         }),
       ];
+    } else if (activeTab === "feedback") {
+      excelData = [
+        headers,
+        ...feedbackRecords.map((record) => [
+          record.date,
+          record.mealType.charAt(0).toUpperCase() + record.mealType.slice(1),
+          record.employeeId,
+          record.employeeName || "Unknown",
+          record.companyName || "—",
+          record.rating,
+          record.comments || "—",
+        ]),
+      ];
     } else {
       excelData = [
         headers,
@@ -1182,7 +1274,10 @@ export default function Reports() {
       const wb = utils.book_new();
       const ws = utils.aoa_to_sheet(excelData);
       utils.book_append_sheet(wb, ws, (
-        activeTab === 'employee' ? 'Employee Report' : (activeTab === 'supportStaff' ? 'Support Staff Report' : 'Company Report')
+        activeTab === 'employee' ? 'Employee Report' :
+          activeTab === 'supportStaff' ? 'Support Staff Report' :
+            activeTab === 'feedback' ? 'Feedback Report' :
+              'Company Report'
       ));
       writeFile(wb, `${fileName}-${new Date().toISOString().split('T')[0]}.xlsx`);
     } catch (e) {
@@ -1235,36 +1330,43 @@ export default function Reports() {
             <nav className="flex space-x-8 px-6">
               <button
                 onClick={() => setActiveTab("employee")}
-                className={`py-4 px-1 border-b-2 font-medium text-sm whitespace-nowrap cursor-pointer ${
-                  activeTab === "employee"
-                    ? "border-blue-500 text-blue-600"
-                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                }`}
+                className={`py-4 px-1 border-b-2 font-medium text-sm whitespace-nowrap cursor-pointer ${activeTab === "employee"
+                  ? "border-blue-500 text-blue-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                  }`}
               >
                 <i className="ri-user-line mr-2"></i>
                 Employee Report
               </button>
               <button
                 onClick={() => setActiveTab("supportStaff")}
-                className={`py-4 px-1 border-b-2 font-medium text-sm whitespace-nowrap cursor-pointer ${
-                  activeTab === "supportStaff"
-                    ? "border-purple-500 text-purple-600"
-                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                }`}
+                className={`py-4 px-1 border-b-2 font-medium text-sm whitespace-nowrap cursor-pointer ${activeTab === "supportStaff"
+                  ? "border-purple-500 text-purple-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                  }`}
               >
                 <i className="ri-tools-line mr-2"></i>
                 Support Staff Report
               </button>
               <button
                 onClick={() => setActiveTab("company")}
-                className={`py-4 px-1 border-b-2 font-medium text-sm whitespace-nowrap cursor-pointer ${
-                  activeTab === "company"
-                    ? "border-green-500 text-green-600"
-                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                }`}
+                className={`py-4 px-1 border-b-2 font-medium text-sm whitespace-nowrap cursor-pointer ${activeTab === "company"
+                  ? "border-green-500 text-green-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                  }`}
               >
                 <i className="ri-building-line mr-2"></i>
                 Company Report
+              </button>
+              <button
+                onClick={() => setActiveTab("feedback")}
+                className={`py-4 px-1 border-b-2 font-medium text-sm whitespace-nowrap cursor-pointer ${activeTab === "feedback"
+                  ? "border-amber-500 text-amber-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                  }`}
+              >
+                <i className="ri-star-smile-line mr-2"></i>
+                Feedback Report
               </button>
             </nav>
           </div>
@@ -1399,8 +1501,7 @@ export default function Reports() {
         </div>
 
         {/* Report Content */}
-        {activeTab === "employee" ? (
-          /* Employee Report Table */
+        {activeTab === "employee" && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200">
             <div className="p-6 border-b border-gray-200">
               <h2 className="text-lg font-semibold text-gray-800">
@@ -1488,9 +1589,8 @@ export default function Reports() {
                       return (
                         <tr
                           key={record.id || index}
-                          className={`hover:bg-gray-50 ${
-                            record.isGuest ? "bg-green-50" : ""
-                          }`}
+                          className={`hover:bg-gray-50 ${record.isGuest ? "bg-green-50" : ""
+                            }`}
                         >
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                             {record.id}
@@ -1555,7 +1655,7 @@ export default function Reports() {
                 </tbody>
               </table>
             </div>
-            
+
             {/* Pagination Controls */}
             {reportData.length > 0 && (
               <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
@@ -1580,7 +1680,7 @@ export default function Reports() {
                       Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, reportData.length)} of {reportData.length} entries
                     </div>
                   </div>
-                  
+
                   <div className="flex items-center space-x-2">
                     <button
                       onClick={() => handlePageChange(currentPage - 1)}
@@ -1589,7 +1689,7 @@ export default function Reports() {
                     >
                       Previous
                     </button>
-                    
+
                     {Array.from({ length: getTotalPages(reportData) }, (_, i) => i + 1)
                       .filter(page => {
                         const totalPages = getTotalPages(reportData);
@@ -1602,17 +1702,16 @@ export default function Reports() {
                           )}
                           <button
                             onClick={() => handlePageChange(page)}
-                            className={`px-3 py-1 text-sm border rounded ${
-                              currentPage === page
-                                ? 'bg-blue-600 text-white border-blue-600'
-                                : 'border-gray-300 hover:bg-gray-100'
-                            }`}
+                            className={`px-3 py-1 text-sm border rounded ${currentPage === page
+                              ? 'bg-blue-600 text-white border-blue-600'
+                              : 'border-gray-300 hover:bg-gray-100'
+                              }`}
                           >
                             {page}
                           </button>
                         </span>
                       ))}
-                    
+
                     <button
                       onClick={() => handlePageChange(currentPage + 1)}
                       disabled={currentPage === getTotalPages(reportData)}
@@ -1625,8 +1724,9 @@ export default function Reports() {
               </div>
             )}
           </div>
-        ) : activeTab === "supportStaff" ? (
-          /* Support Staff Report Table */
+        )}
+
+        {activeTab === "supportStaff" && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200">
             <div className="p-6 border-b border-gray-200">
               <h2 className="text-lg font-semibold text-gray-800">
@@ -1767,7 +1867,7 @@ export default function Reports() {
                 </tbody>
               </table>
             </div>
-            
+
             {/* Pagination Controls for Support Staff */}
             {supportStaffReportData.length > 0 && (
               <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
@@ -1792,7 +1892,7 @@ export default function Reports() {
                       Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, supportStaffReportData.length)} of {supportStaffReportData.length} entries
                     </div>
                   </div>
-                  
+
                   <div className="flex items-center space-x-2">
                     <button
                       onClick={() => handlePageChange(currentPage - 1)}
@@ -1801,7 +1901,7 @@ export default function Reports() {
                     >
                       Previous
                     </button>
-                    
+
                     {Array.from({ length: getTotalPages(supportStaffReportData) }, (_, i) => i + 1)
                       .filter(page => {
                         const totalPages = getTotalPages(supportStaffReportData);
@@ -1814,17 +1914,16 @@ export default function Reports() {
                           )}
                           <button
                             onClick={() => handlePageChange(page)}
-                            className={`px-3 py-1 text-sm border rounded ${
-                              currentPage === page
-                                ? 'bg-blue-600 text-white border-blue-600'
-                                : 'border-gray-300 hover:bg-gray-100'
-                            }`}
+                            className={`px-3 py-1 text-sm border rounded ${currentPage === page
+                              ? 'bg-blue-600 text-white border-blue-600'
+                              : 'border-gray-300 hover:bg-gray-100'
+                              }`}
                           >
                             {page}
                           </button>
                         </span>
                       ))}
-                    
+
                     <button
                       onClick={() => handlePageChange(currentPage + 1)}
                       disabled={currentPage === getTotalPages(supportStaffReportData)}
@@ -1837,8 +1936,9 @@ export default function Reports() {
               </div>
             )}
           </div>
-        ) : (
-          /* Company Report Table */
+        )}
+
+        {activeTab === "company" && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200">
             <div className="p-6 border-b border-gray-200">
               <h2 className="text-lg font-semibold text-gray-800">
@@ -1920,7 +2020,7 @@ export default function Reports() {
                 </tbody>
               </table>
             </div>
-            
+
             {/* Pagination Controls for Company */}
             {companyReportData.length > 0 && (
               <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
@@ -1945,7 +2045,7 @@ export default function Reports() {
                       Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, companyReportData.length)} of {companyReportData.length} entries
                     </div>
                   </div>
-                  
+
                   <div className="flex items-center space-x-2">
                     <button
                       onClick={() => handlePageChange(currentPage - 1)}
@@ -1954,7 +2054,7 @@ export default function Reports() {
                     >
                       Previous
                     </button>
-                    
+
                     {Array.from({ length: getTotalPages(companyReportData) }, (_, i) => i + 1)
                       .filter(page => {
                         const totalPages = getTotalPages(companyReportData);
@@ -1967,17 +2067,16 @@ export default function Reports() {
                           )}
                           <button
                             onClick={() => handlePageChange(page)}
-                            className={`px-3 py-1 text-sm border rounded ${
-                              currentPage === page
-                                ? 'bg-blue-600 text-white border-blue-600'
-                                : 'border-gray-300 hover:bg-gray-100'
-                            }`}
+                            className={`px-3 py-1 text-sm border rounded ${currentPage === page
+                              ? 'bg-blue-600 text-white border-blue-600'
+                              : 'border-gray-300 hover:bg-gray-100'
+                              }`}
                           >
                             {page}
                           </button>
                         </span>
                       ))}
-                    
+
                     <button
                       onClick={() => handlePageChange(currentPage + 1)}
                       disabled={currentPage === getTotalPages(companyReportData)}
@@ -1992,6 +2091,333 @@ export default function Reports() {
           </div>
         )}
 
+        {activeTab === "feedback" && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+            <div className="p-6 border-b border-gray-200 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-800">
+                  Employee Feedback
+                </h2>
+                <p className="text-sm text-gray-600 mt-1">
+                  All feedback submitted by employees for breakfast and lunch, with rating distribution.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                {feedbackSummary && (
+                  <div className="flex flex-wrap gap-3 text-sm">
+                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-50 border border-amber-100">
+                      <i className="ri-star-smile-line text-amber-500"></i>
+                    <span className={`font-medium ${ratingTextClass(feedbackSummary?.avgRating)}`}>
+                        Avg rating:{" "}
+                        {feedbackSummary.avgRating != null ? feedbackSummary.avgRating.toFixed(2) : "N/A"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-50 border border-slate-100">
+                      <i className="ri-message-2-line text-slate-500"></i>
+                      <span className="font-medium text-slate-700">
+                        Total feedback: {feedbackSummary.total}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                {/* <button
+                  onClick={handleExportReport}
+                  disabled={feedbackRecords.length === 0}
+                  className="px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm inline-flex items-center gap-2"
+                >
+                  <i className="ri-download-line"></i>
+                  Download Report
+                </button> */}
+              </div>
+            </div>
+
+            <div className="p-4 space-y-6">
+              {/* Feedback list */}
+              <div className="overflow-x-auto">
+                {feedbackLoading ? (
+                  <div className="py-12 text-center text-gray-500">
+                    <i className="ri-loader-4-line text-2xl animate-spin mb-2"></i>
+                    <p>Loading feedback…</p>
+                  </div>
+                ) : feedbackRecords.length === 0 ? (
+                  <div className="py-12 text-center text-gray-500">
+                    <i className="ri-emotion-unhappy-line text-3xl mb-2"></i>
+                    <p>No feedback found for the selected range.</p>
+                  </div>
+                ) : (
+                  <>
+                    <table className="w-full min-w-[640px]">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Date
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Meal
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Employee
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Company
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Rating
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Comments
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {paginatedFeedbackRecords.map((f) => (
+                          <tr key={f.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => { setFeedbackModalItem(f); setFeedbackModalOpen(true); }}>
+                            <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">
+                              {f.date}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap capitalize">
+                              <span
+                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${f.mealType === "breakfast"
+                                  ? "bg-orange-50 text-orange-700 border border-orange-100"
+                                  : "bg-green-50 text-green-700 border border-green-100"
+                                  }`}
+                              >
+                                {f.mealType === "breakfast" ? (
+                                  <i className="ri-restaurant-line mr-1"></i>
+                                ) : (
+                                  <i className="ri-bowl-line mr-1"></i>
+                                )}
+                                {f.mealType}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">
+                              <div className="flex flex-col">
+                                <span>{f.employeeName || "Unknown"}</span>
+                                <span className="text-xs text-gray-500">
+                                  {f.employeeId}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
+                              {f.companyName || "—"}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">
+                              <span className="inline-flex items-center gap-1">
+                                <span className="font-semibold">{f.rating}</span>
+                                <i className="ri-star-fill text-amber-400 text-xs"></i>
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-700 max-w-xs">
+                              {f.comments || "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {/* Feedback detail modal */}
+                    {feedbackModalOpen && feedbackModalItem && (
+                      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                        <div className="absolute inset-0 bg-black/50" onClick={() => setFeedbackModalOpen(false)}></div>
+                        <div className="relative bg-white rounded-lg shadow-xl max-w-3xl w-full z-10 overflow-auto">
+                          <div className="p-4 border-b flex items-center justify-between">
+                            <div>
+                              <h3 className="text-lg font-semibold text-gray-800">Feedback details</h3>
+                              <div className="text-sm text-gray-500">{feedbackModalItem.date} · {feedbackModalItem.mealType}</div>
+                            </div>
+                            <button onClick={() => setFeedbackModalOpen(false)} className="p-2 text-gray-600 hover:bg-gray-100 rounded">
+                              <i className="ri-close-line"></i>
+                            </button>
+                          </div>
+                          <div className="p-4 space-y-3">
+                            <div>
+                              <div className="text-sm text-gray-600">Employee</div>
+                              <div className="text-base font-medium">{feedbackModalItem.employeeName || feedbackModalItem.employeeId}</div>
+                            </div>
+                            <div>
+                              <div className="text-sm text-gray-600">Overall rating</div>
+                      <div className={`text-xl font-semibold ${ratingTextClass(feedbackModalItem.rating)}`}>{feedbackModalItem.rating} / 5</div>
+                              {feedbackModalItem.comments && <p className="text-sm text-gray-700 mt-1">{feedbackModalItem.comments}</p>}
+                            </div>
+                            {feedbackModalItem.items && feedbackModalItem.items.length > 0 && (
+                              <div>
+                                <div className="text-sm text-gray-600 mb-2">Per-item feedback</div>
+                                <ul className="space-y-2">
+                                  {feedbackModalItem.items.map((it: any, idx: number) => (
+                                    <li key={idx} className="border rounded p-2">
+                                      <div className="flex items-center justify-between">
+                                        <div className="font-medium text-gray-800">{it.name}</div>
+                          <div className={`${ratingBadgeText(it.rating)} font-semibold`}>{it.rating} / 5</div>
+                                      </div>
+                                      {it.comments && <div className="text-sm text-gray-600 mt-1">{it.comments}</div>}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Pagination for feedback list */}
+                    {feedbackRecords.length > FEEDBACK_PAGE_SIZE && (
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
+                        <div className="text-gray-600">
+                          Page {feedbackPage} of {feedbackTotalPages} • Showing{" "}
+                          {Math.min((feedbackPage - 1) * FEEDBACK_PAGE_SIZE + 1, feedbackRecords.length)}–
+                          {Math.min(feedbackPage * FEEDBACK_PAGE_SIZE, feedbackRecords.length)} of{" "}
+                          {feedbackRecords.length}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setFeedbackPage((p) => Math.max(1, p - 1))}
+                            disabled={feedbackPage <= 1}
+                            className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Previous
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setFeedbackPage((p) => Math.min(feedbackTotalPages, p + 1))}
+                            disabled={feedbackPage >= feedbackTotalPages}
+                            className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* Visual summary */}
+              {feedbackSummary && feedbackSummary.total > 0 && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                  {/* Summary cards */}
+                  <div className="space-y-4 lg:col-span-1">
+                    <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-medium text-amber-700 mb-1">Overall average</p>
+                        <p className="text-2xl font-bold text-amber-700">
+                          {feedbackSummary.avgRating != null ? feedbackSummary.avgRating.toFixed(2) : "N/A"}
+                        </p>
+                      </div>
+                      <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
+                        <i className="ri-star-smile-line text-xl text-amber-600"></i>
+                      </div>
+                    </div>
+                    <div className="bg-orange-50 border border-orange-100 rounded-xl p-4 flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-medium text-orange-700 mb-1">Breakfast</p>
+                        <p className="text-lg font-semibold text-orange-700">
+                          {feedbackSummary.byMeal.breakfast.count > 0
+                            ? (feedbackSummary.byMeal.breakfast.avgRating?.toFixed(2) ?? "N/A")
+                            : "No feedback"}
+                        </p>
+                        <p className="text-xs text-orange-700/80 mt-0.5">
+                          {feedbackSummary.byMeal.breakfast.count} responses
+                        </p>
+                      </div>
+                      <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center">
+                        <i className="ri-restaurant-line text-xl text-orange-600"></i>
+                      </div>
+                    </div>
+                    <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-medium text-emerald-700 mb-1">Lunch</p>
+                        <p className="text-lg font-semibold text-emerald-700">
+                          {feedbackSummary.byMeal.lunch.count > 0
+                            ? (feedbackSummary.byMeal.lunch.avgRating?.toFixed(2) ?? "N/A")
+                            : "No feedback"}
+                        </p>
+                        <p className="text-xs text-emerald-700/80 mt-0.5">
+                          {feedbackSummary.byMeal.lunch.count} responses
+                        </p>
+                      </div>
+                      <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
+                        <i className="ri-bowl-line text-xl text-emerald-600"></i>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Per-item averages */}
+                  <div className="bg-white rounded-xl border border-gray-200 p-4 lg:col-span-2">
+                    <h3 className="text-sm font-semibold text-gray-800 mb-2">Item-wise averages</h3>
+                    {feedbackSummary?.itemStats && Object.keys(feedbackSummary.itemStats).length > 0 ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {Object.entries(feedbackSummary.itemStats).map(([name, stat]: any) => (
+                          <div key={name} className="p-3 border rounded-lg flex items-center justify-between">
+                            <div>
+                              <div className="font-medium text-gray-800">{name}</div>
+                              <div className="text-xs text-gray-500">{stat.count} reviews</div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-lg font-semibold text-amber-700">{stat.avgRating != null ? stat.avgRating.toFixed(2) : 'N/A'}</div>
+                              <div className="text-xs text-gray-500">avg rating</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-500">No itemized feedback available.</p>
+                    )}
+                  </div>
+
+                  {/* Rating distribution bars */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 lg:col-span-2">
+                    <h3 className="text-sm font-semibold text-slate-800 mb-2">
+                      Rating distribution
+                    </h3>
+                    <p className="text-xs text-slate-500 mb-4">
+                      Relative frequency of 1–5 star ratings across all feedback.
+                    </p>
+                    {(() => {
+                      const entries = [5, 4, 3, 2, 1].map((r) => ({
+                        rating: r,
+                        count: feedbackSummary.byRating[String(r)] ?? feedbackSummary.byRating[r] ?? 0,
+                      }));
+                      const maxCount = Math.max(...entries.map((e) => e.count), 1);
+                      const colorFor = (r: number) => {
+                        if (r >= 4) return "bg-emerald-500";
+                        if (r === 3) return "bg-amber-500";
+                        return "bg-red-500";
+                      };
+                      return (
+                        <div className="space-y-3">
+                          {entries.map(({ rating, count }) => {
+                            const widthPct = (count / maxCount) * 100;
+                            const pctOfTotal =
+                              feedbackSummary.total > 0
+                                ? Math.round((count / feedbackSummary.total) * 100)
+                                : 0;
+                            return (
+                              <div key={rating} className="flex items-center gap-3">
+                                <div className="w-14 text-xs font-medium text-slate-700 flex items-center gap-1">
+                                  <span>{rating}</span>
+                                  <i className="ri-star-fill text-[10px] text-amber-400"></i>
+                                </div>
+                                <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+                                  <div
+                                    className={`h-2 rounded-full ${colorFor(rating)}`}
+                                    style={{ width: widthPct + "%" }}
+                                  ></div>
+                                </div>
+                                <div className="w-20 text-right text-xs text-slate-600">
+                                  {count} ({pctOfTotal}%)
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         {/* Summary Section */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
