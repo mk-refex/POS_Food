@@ -197,6 +197,14 @@ export const mastersApi = {
     apiFetch(`/masters/menus?date=${encodeURIComponent(date)}&mealType=${encodeURIComponent(mealType)}`, { method: 'DELETE' }),
 };
 
+// Employee Auth related APIs (preview and self-billing)
+export const employeeAuthApi = {
+  selfBillPreview: (employeeId: string, quantity?: number) =>
+    apiFetch(`/employee-auth/self-bill/preview?employeeId=${encodeURIComponent(employeeId)}${quantity ? `&quantity=${Number(quantity)}` : ''}`),
+  selfBill: (payload: { employeeId: string; quantity?: number; userId?: number | string; forceException?: boolean }) =>
+    apiFetch('/employee-auth/self-bill', { method: 'POST', body: JSON.stringify(payload) }),
+};
+
 function toQuery(params?: Record<string, any>) {
   if (!params) return '';
   const query = Object.entries(params)

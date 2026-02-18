@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { apiFetch, getCurrentUser } from "../../api/client";
+import { apiFetch, getCurrentUser, employeeAuthApi } from "../../api/client";
 import Footer from "../../components/Footer";
 import refexLogo from "../../assets/refex-logo.png";
 import { buildReceiptHtml } from "./receiptBuilder";
@@ -76,9 +76,7 @@ export default function SelfBillingPage() {
     // lock to avoid duplicate preview/confirm flows
     lockedRef.current = true;
     try {
-      const res = await apiFetch(
-        `/employee-auth/self-bill/preview?employeeId=${encodeURIComponent(empId)}`,
-      );
+      const res = await employeeAuthApi.selfBillPreview(empId);
       setPreview(res);
       // open modal if server returned warnings (already billed)
       if (res && ((res.warnings && Object.keys(res.warnings).length > 0) || res.warnings?.priorException)) {
@@ -142,21 +140,12 @@ export default function SelfBillingPage() {
     setProcessing(true);
     try {
       const currentUser = getCurrentUser();
-      const res = await fetch(
-        `${(import.meta as any).env.VITE_API_URL || "http://localhost:5000/api"}/employee-auth/self-bill`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            employeeId: preview.employee.employeeId,
-            quantity: 1,
-            userId: currentUser?.id ?? currentUser?.userId ?? undefined,
-            forceException: !!forceException,
-          }),
-        },
-      );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.message || "Billing failed");
+      const data = await employeeAuthApi.selfBill({
+        employeeId: preview.employee.employeeId,
+        quantity: 1,
+        userId: currentUser?.id ?? currentUser?.userId ?? undefined,
+        forceException: !!forceException,
+      });
       const trx = data.transaction;
       // build receipt html and open print window
       const billingData = {

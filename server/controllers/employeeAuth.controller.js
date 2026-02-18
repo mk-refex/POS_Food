@@ -361,10 +361,13 @@ export async function selfBill(req, res) {
     const price = meal === 'breakfast' ? Number(priceMaster?.employeeBreakfast || 20) : Number(priceMaster?.employeeLunch || 48);
 
     const date = now.toISOString().split('T')[0];
-    const time = now.toLocaleTimeString();
+    // force time format like "11:14:24 AM" (uppercase AM/PM)
+    const time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase();
 
     const qty = Math.max(1, Number(body.quantity || 1));
     const items = [{
+      // include numeric id for meal: 1 = Breakfast, 2 = Lunch
+      id: meal === 'breakfast' ? 1 : 2,
       name: meal === 'breakfast' ? 'Breakfast' : 'Lunch',
       quantity: qty,
       actualPrice: price,
