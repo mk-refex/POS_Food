@@ -15,7 +15,7 @@ export function getEmployeeToken() {
   return localStorage.getItem(EMPLOYEE_TOKEN_KEY) || '';
 }
 
-export function apiFetchEmployee(path: string, options: RequestInit = {}) {
+export async function apiFetchEmployee(path: string, options: RequestInit = {}) {
   const base = getApiBaseUrl();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -24,7 +24,14 @@ export function apiFetchEmployee(path: string, options: RequestInit = {}) {
   const token = getEmployeeToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  return apiFetchWithBase(`${base}${path}`, { ...options, headers });
+  try {
+    return await apiFetchWithBase(`${base}${path}`, { ...options, headers });
+  } catch (e) {
+    if ((e as any)?.status === 401 && token) {
+      clearEmployeeSession();
+    }
+    throw e;
+  }
 }
 
 async function apiFetchWithBase(url: string, options: RequestInit = {}) {

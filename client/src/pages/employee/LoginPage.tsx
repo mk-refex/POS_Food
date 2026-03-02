@@ -6,23 +6,17 @@ import {
   Alert,
   Button,
   TextField,
-  Tabs,
-  Tab,
   InputAdornment,
   CircularProgress,
 } from "@mui/material";
 import refexLogo from "../../assets/refex-logo.png";
 import loginBg from "../../assets/login-bg.png";
 import {
-  SmsOutlined,
-  QrCode2Outlined,
   PersonOutlined,
   PinOutlined,
   ErrorOutline,
 } from "@mui/icons-material";
 import { setEmployeeSession, isEmployeeAuthenticated } from "../../api/client";
-
-type LoginMethod = "otp" | "qr";
 
 const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
   no_code: "Google did not return an authorization code. Try again.",
@@ -34,26 +28,24 @@ const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
   login_failed: "Google sign-in failed. Try again.",
 };
 
+function buildIdentifierBody(identifier: string) {
+  const value = identifier.trim();
+  if (value.includes("@")) return { email: value };
+  return { employeeId: value };
+}
+
 export default function EmployeeLoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const from = (location.state as { from?: { pathname: string } })?.from?.pathname || "/employee/dashboard";
-  const [method, setMethod] = useState<LoginMethod>("otp");
 
-  // OTP flow
   const [otpStep, setOtpStep] = useState<"input" | "verify">("input");
-  const [mobileOrId, setMobileOrId] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [otp, setOtp] = useState("");
-  const [otpSent, setOtpSent] = useState(false);
-
-  // QR flow
-  const [qrEmployeeId, setQrEmployeeId] = useState("");
-
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Show error from Google callback if present
   useEffect(() => {
     const err = searchParams.get("error");
     if (err && GOOGLE_ERROR_MESSAGES[err]) {
@@ -66,7 +58,6 @@ export default function EmployeeLoginPage() {
     }
   }, [searchParams, setSearchParams]);
 
-  // If already logged in as employee, redirect immediately (no flash of login form)
   if (isEmployeeAuthenticated()) {
     return <Navigate to={from} replace />;
   }
@@ -84,24 +75,19 @@ export default function EmployeeLoginPage() {
   const handleRequestOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    const value = mobileOrId.trim();
+    const value = identifier.trim();
     if (!value) {
-      setError("Enter mobile number or employee ID");
+      setError("Enter employee code or email");
       return;
     }
     setLoading(true);
     try {
-      const isNumeric = /^\d+$/.test(value);
-      const body = isNumeric && value.length >= 10
-        ? { mobileNumber: value }
-        : { employeeId: value };
       const res = await api("/employee-auth/request-otp", {
         method: "POST",
-        body: JSON.stringify(body),
+        body: JSON.stringify(buildIdentifierBody(value)),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.message || "Failed to send OTP");
-      setOtpSent(true);
       setOtpStep("verify");
       setOtp("");
       setError("");
@@ -121,11 +107,7 @@ export default function EmployeeLoginPage() {
     }
     setLoading(true);
     try {
-      const value = mobileOrId.trim();
-      const isNumeric = /^\d+$/.test(value);
-      const body = isNumeric && value.length >= 10
-        ? { mobileNumber: value, otp: otp.trim() }
-        : { employeeId: value, otp: otp.trim() };
+      const body = { ...buildIdentifierBody(identifier), otp: otp.trim() };
       const res = await api("/employee-auth/verify-otp", {
         method: "POST",
         body: JSON.stringify(body),
@@ -139,40 +121,6 @@ export default function EmployeeLoginPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleQrLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    const id = qrEmployeeId.trim();
-    if (!id) {
-      setError("Enter employee ID (or scan QR)");
-      return;
-    }
-    setLoading(true);
-    try {
-      const res = await api("/employee-auth/qr-login", {
-        method: "POST",
-        body: JSON.stringify({ employeeId: id }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.message || "Login failed");
-      setEmployeeSession(data.token, data.employee);
-      navigate(from, { replace: true });
-    } catch (err: any) {
-      setError(err.message || "Login failed");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const switchMethod = (m: LoginMethod) => {
-    setMethod(m);
-    setError("");
-    setOtpStep("input");
-    setOtpSent(false);
-    setOtp("");
-    setQrEmployeeId("");
   };
 
   return (
@@ -199,7 +147,7 @@ export default function EmployeeLoginPage() {
             Employee Portal
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            View your food consumption and transaction history. Sign in with OTP or QR.
+            View your food consumption and transaction history. Sign in with OTP (email) or with Google.
           </Typography>
         </Box>
       </Box>
@@ -221,81 +169,59 @@ export default function EmployeeLoginPage() {
             Sign in
           </Typography>
 
-          <Tabs value={method} onChange={(_, v) => switchMethod(v)} sx={{ mb: 3 }}>
-            <Tab value="otp" label="OTP" icon={<SmsOutlined />} iconPosition="start" />
-            <Tab value="qr" label="QR / Employee ID" icon={<QrCode2Outlined />} iconPosition="start" />
-          </Tabs>
-
           {error && (
             <Alert severity="error" sx={{ mb: 2 }} icon={<ErrorOutline />}>
               {error}
             </Alert>
           )}
 
-          {method === "otp" && (
-            <>
-              {otpStep === "input" && (
-                <Box component="form" onSubmit={handleRequestOtp}>
-                  <TextField
-                    fullWidth
-                    label="Mobile number or Employee ID"
-                    value={mobileOrId}
-                    onChange={(e) => setMobileOrId(e.target.value)}
-                    placeholder="e.g. 9876543210 or EMP001"
-                    InputProps={{ startAdornment: <InputAdornment position="start"><PersonOutlined /></InputAdornment> }}
-                    sx={{ mb: 2 }}
-                  />
-                  <Button type="submit" fullWidth variant="contained" size="large" disabled={loading}>
-                    {loading ? <CircularProgress size={24} /> : "Send OTP"}
-                  </Button>
-                </Box>
-              )}
-              {otpStep === "verify" && (
-                <Box component="form" onSubmit={handleVerifyOtp}>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                    OTP sent to your registered mobile (use 123456 in dev).
-                  </Typography>
-                  <TextField
-                    fullWidth
-                    label="6-digit OTP"
-                    value={otp}
-                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                    inputProps={{ maxLength: 6 }}
-                    InputProps={{ startAdornment: <InputAdornment position="start"><PinOutlined /></InputAdornment> }}
-                    sx={{ mb: 2 }}
-                  />
-                  <Button type="submit" fullWidth variant="contained" size="large" disabled={loading || otp.length !== 6}>
-                    {loading ? <CircularProgress size={24} /> : "Verify & sign in"}
-                  </Button>
-                  <Button fullWidth sx={{ mt: 1 }} onClick={() => { setOtpStep("input"); setOtpSent(false); }}>
-                    Change number / ID
-                  </Button>
-                </Box>
-              )}
-            </>
-          )}
-
-          {method === "qr" && (
-            <Box component="form" onSubmit={handleQrLogin}>
+          {otpStep === "input" && (
+            <Box component="form" onSubmit={handleRequestOtp}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                Sign in with OTP — enter your details and we’ll email you a code.
+              </Typography>
               <TextField
                 fullWidth
-                label="Employee ID (or scan QR)"
-                value={qrEmployeeId}
-                onChange={(e) => setQrEmployeeId(e.target.value)}
-                placeholder="e.g. EMP001"
-                InputProps={{ startAdornment: <InputAdornment position="start"><QrCode2Outlined /></InputAdornment> }}
+                label="Employee code or email"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                placeholder="e.g. EMPX001234 or you@company.com"
+                InputProps={{ startAdornment: <InputAdornment position="start"><PersonOutlined /></InputAdornment> }}
                 sx={{ mb: 2 }}
               />
               <Button type="submit" fullWidth variant="contained" size="large" disabled={loading}>
-                {loading ? <CircularProgress size={24} /> : "Sign in with ID"}
+                {loading ? <CircularProgress size={24} /> : "Send OTP"}
               </Button>
-              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 2, textAlign: "center" }}>
-                In future you can scan your QR code here.
+            </Box>
+          )}
+
+          {otpStep === "verify" && (
+            <Box component="form" onSubmit={handleVerifyOtp}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                OTP sent to your registered email. Enter the 6-digit code below.
               </Typography>
+              <TextField
+                fullWidth
+                label="6-digit OTP"
+                value={otp}
+                onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                inputProps={{ maxLength: 6 }}
+                InputProps={{ startAdornment: <InputAdornment position="start"><PinOutlined /></InputAdornment> }}
+                sx={{ mb: 2 }}
+              />
+              <Button type="submit" fullWidth variant="contained" size="large" disabled={loading || otp.length !== 6}>
+                {loading ? <CircularProgress size={24} /> : "Verify & sign in"}
+              </Button>
+              <Button fullWidth sx={{ mt: 1 }} onClick={() => { setOtpStep("input"); }}>
+                Change employee code / email
+              </Button>
             </Box>
           )}
 
           <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: "divider" }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, textAlign: "center" }}>
+              Or
+            </Typography>
             <Button
               fullWidth
               variant="outlined"
@@ -309,7 +235,7 @@ export default function EmployeeLoginPage() {
           </Box>
 
           <Typography variant="caption" color="text.secondary" display="block" textAlign="center" sx={{ mt: 3 }}>
-            Staff portal — view your transactions only.
+            Powered by Refex AI Team © {new Date().getFullYear()}
           </Typography>
         </Box>
       </Box>

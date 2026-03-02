@@ -21,37 +21,59 @@ const selfBillLocks = new Set();
 
 export async function requestOtp(req, res) {
   const schema = z.object({
-    mobileNumber: z.string().min(10).optional(),
     employeeId: z.string().min(1).optional(),
-  }).refine((d) => d.mobileNumber || d.employeeId, { message: 'Provide mobileNumber or employeeId' });
+    email: z.string().email().optional(),
+  }).refine((d) => d.employeeId || d.email, { message: 'Provide email or employee ID' });
 
   const parse = schema.safeParse(req.body);
   if (!parse.success) {
     return res.status(400).json({ message: 'Validation failed', errors: parse.error.flatten().fieldErrors });
   }
 
-  const { mobileNumber, employeeId } = parse.data;
+  const { employeeId, email } = parse.data;
   try {
     const where = {};
-    if (employeeId) where.employeeId = employeeId;
-    else if (mobileNumber) where.mobileNumber = { [Op.like]: `%${normalizeMobile(mobileNumber)}` };
+    if (employeeId) where.employeeId = employeeId.trim();
+    else if (email) where.email = email.trim().toLowerCase();
 
-    const employee = await Employee.findOne({ where, attributes: ['id', 'employeeId', 'employeeName', 'mobileNumber'] });
+    const employee = await Employee.findOne({ where, attributes: ['id', 'employeeId', 'employeeName', 'mobileNumber', 'email'] });
     if (!employee) {
-      return res.status(404).json({ message: 'Employee not found. Check mobile number or employee ID.' });
+      return res.status(404).json({ message: 'Employee not found. Check email or employee ID.' });
     }
 
-    const otp = process.env.NODE_ENV === 'production' ? generateOTP() : DEV_OTP;
-    const key = employeeId ? employee.employeeId : normalizeMobile(employee.mobileNumber) || employee.employeeId;
+    const emailToUse = (employee.email || '').trim().toLowerCase();
+    if (!emailToUse) {
+      return res.status(400).json({ message: 'No email on file for this employee. Contact admin to add your email.' });
+    }
+
+    const otp = generateOTP();
+    const key = employee.employeeId;
     otpStore.set(key, { otp, expiresAt: Date.now() + OTP_EXPIRY_MS, employeeId: employee.employeeId });
 
-    // In production you would send SMS here (e.g. Twilio). For dev, we return masked message.
-    const sent = process.env.NODE_ENV === 'production';
-    return res.json({
-      message: sent ? 'OTP sent to your registered mobile number' : 'Use OTP 123456 for development (or set EMPLOYEE_DEV_OTP)',
-      // Do not send OTP in response in production
-      ...(process.env.NODE_ENV !== 'production' ? { devOtp: otp } : {}),
-    });
+    // Send OTP via SMTP email (same config as Admin panel)
+    const { sendSmtpMail } = await import('../services/transactionEmail.js');
+    const { sent, error: sendError } = await sendSmtpMail(
+      emailToUse,
+      'Your login OTP – POS Food',
+      `Your one-time password is: ${otp}. It is valid for 5 minutes. Do not share it.`,
+    );
+
+    if (!sent) {
+      if (process.env.NODE_ENV !== 'production') {
+        return res.json({
+          message: 'SMTP not configured. Use OTP 123456 for development (or set EMPLOYEE_DEV_OTP).',
+          devOtp: otp,
+        });
+      }
+      return res.status(503).json({
+        message: sendError || 'OTP could not be sent. Configure SMTP in Admin panel and try again.',
+      });
+    }
+
+    if (process.env.NODE_ENV !== 'production') {
+      return res.json({ message: 'OTP sent to your registered email.', devOtp: otp });
+    }
+    return res.json({ message: 'OTP sent to your registered email.' });
   } catch (error) {
     console.error('Employee request OTP error:', error);
     return res.status(500).json({ message: 'Failed to send OTP' });
@@ -59,10 +81,10 @@ export async function requestOtp(req, res) {
 }
 
 const verifyOtpSchema = z.object({
-  mobileNumber: z.string().min(10).optional(),
   employeeId: z.string().min(1).optional(),
+  email: z.string().email().optional(),
   otp: z.string().length(6),
-}).refine((d) => d.mobileNumber || d.employeeId, { message: 'Provide mobileNumber or employeeId' });
+}).refine((d) => d.employeeId || d.email, { message: 'Provide email or employee ID' });
 
 export async function verifyOtp(req, res) {
   const parse = verifyOtpSchema.safeParse(req.body);
@@ -70,8 +92,17 @@ export async function verifyOtp(req, res) {
     return res.status(400).json({ message: 'Validation failed', errors: parse.error.flatten().fieldErrors });
   }
 
-  const { mobileNumber, employeeId, otp } = parse.data;
-  const key = employeeId ? employeeId : normalizeMobile(mobileNumber);
+  const { employeeId, email, otp } = parse.data;
+  let key = employeeId ? employeeId.trim() : null;
+  if (!key) {
+    if (!email) return res.status(400).json({ message: 'Provide email or employee ID' });
+    const emp = await Employee.findOne({
+      where: { email: email.trim().toLowerCase() },
+      attributes: ['employeeId'],
+    });
+    if (!emp) return res.status(404).json({ message: 'Employee not found.' });
+    key = emp.employeeId;
+  }
   const stored = otpStore.get(key);
   if (!stored) {
     return res.status(400).json({ message: 'OTP expired or not requested. Please request a new OTP.' });
