@@ -5,6 +5,44 @@ import { Transaction, SmtpConfig } from '../models/index.js';
 const LOGO_URL = 'https://refexrenewables.com/img/logo.png';
 
 /**
+ * Send a single email via configured SMTP. Used for OTP and other transactional emails.
+ * @param {string} to - recipient email
+ * @param {string} subject - subject line
+ * @param {string} text - plain text body
+ * @returns {{ sent: boolean, error?: string }}
+ */
+export async function sendSmtpMail(to, subject, text) {
+  if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+    return { sent: false, error: 'Invalid recipient email' };
+  }
+  try {
+    const config = await SmtpConfig.findOne({ where: { isActive: true } });
+    if (!config || !config.host || !config.user) {
+      return { sent: false, error: 'SMTP not configured. Configure SMTP in Admin panel.' };
+    }
+    const transporter = nodemailer.createTransport({
+      host: config.host,
+      port: config.port || (config.secure ? 465 : 587),
+      secure: !!config.secure,
+      auth: config.user ? { user: config.user, pass: config.password || '' } : undefined,
+    });
+    const from = config.fromEmail || config.user || 'noreply@localhost';
+    const fromName = config.fromName || 'POS Food';
+    await transporter.sendMail({
+      from: config.fromName ? `"${fromName}" <${from}>` : from,
+      to,
+      subject,
+      text,
+    });
+    return { sent: true };
+  } catch (e) {
+    const msg = e?.message || String(e);
+    console.error('sendSmtpMail error:', msg);
+    return { sent: false, error: msg };
+  }
+}
+
+/**
  * Get monthly (same month as given date) transaction summary for an employee: breakfast/lunch counts and total amount.
  * @param {string} customerType - 'employee' | 'supportStaff'
  * @param {string} customerId - employeeId or staffId

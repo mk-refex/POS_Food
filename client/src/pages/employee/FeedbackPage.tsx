@@ -23,7 +23,6 @@ interface FeedbackRecord {
   date: string;
   mealType: string;
   rating: number;
-  comments: string | null;
   createdAt?: string;
 }
 
@@ -72,10 +71,7 @@ export default function EmployeeFeedbackPage() {
 
   const [mealType, setMealType] = useState<"breakfast" | "lunch">("breakfast");
   const [rating, setRating] = useState<number>(0);
-  const [comments, setComments] = useState("");
-  const [itemFeedbacks, setItemFeedbacks] = useState<
-    { name: string; rating: number; comments?: string | null }[]
-  >([]);
+  const [itemFeedbacks, setItemFeedbacks] = useState<{ name: string; rating: number }[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState("");
   const [error, setError] = useState("");
@@ -209,7 +205,7 @@ export default function EmployeeFeedbackPage() {
       setItemFeedbacks([]);
       return;
     }
-    setItemFeedbacks(items.map((it: any) => ({ name: it.name || "", rating: 0, comments: null })));
+    setItemFeedbacks(items.map((it: any) => ({ name: it.name || "", rating: 0 })));
   }, [formDate, mealType, menus]);
 
   const hasMenuForFormDate = useMemo(() => {
@@ -309,7 +305,6 @@ export default function EmployeeFeedbackPage() {
       const payload: any = {
         date: formDate,
         mealType,
-        comments: comments || undefined,
       };
       if (itemFeedbacks && itemFeedbacks.length > 0) {
         payload.items = itemFeedbacks;
@@ -322,7 +317,6 @@ export default function EmployeeFeedbackPage() {
       });
       setSuccess("Thank you! Your feedback has been submitted.");
       setRating(0);
-      setComments("");
       setItemFeedbacks([]);
       await loadMyFeedback();
     } catch (err: any) {
@@ -338,7 +332,7 @@ export default function EmployeeFeedbackPage() {
         <div className="shrink-0 mb-4">
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Feedback & Review</h1>
           <p className="text-gray-600 mt-1">
-            Select a date to view the menu, then rate and comment on a meal.
+            Select a date to view the menu, then rate a meal (1–5).
           </p>
         </div>
 
@@ -565,7 +559,7 @@ export default function EmployeeFeedbackPage() {
             <div className="px-6 py-4 border-b border-gray-200">
               <h2 className="text-lg font-semibold text-gray-900">Submit feedback</h2>
               <p className="text-sm text-gray-600 mt-0.5">
-                Rate a meal for <strong>{formDate}</strong> (1–5) and add optional comments.
+                Rate a meal for <strong>{formDate}</strong> (1–5).
                 {!canSubmitFeedback && (
                   <span className="block mt-1 text-amber-600 text-xs">
                     Only for past menus or today after 2:00 PM, with a published menu, and only for meals you consumed (billed in canteen).
@@ -613,92 +607,50 @@ export default function EmployeeFeedbackPage() {
                   <div className="text-sm font-medium text-gray-700">Rate each menu item (1–5)</div>
                   <div className="space-y-3">
                     {itemFeedbacks.map((it, idx) => (
-                      <div key={idx} className="border border-gray-100 rounded-lg p-3">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="font-medium text-gray-800">{it.name}</div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {[1, 2, 3, 4, 5].map((r) => (
-                              <button
-                                key={r}
-                                type="button"
-                                onClick={() =>
-                                  setItemFeedbacks((prev) => {
-                                    const copy = [...prev];
-                                    copy[idx] = { ...copy[idx], rating: r };
-                                    return copy;
-                                  })
-                                }
-                                className={`w-8 h-8 rounded-md text-sm font-medium transition-colors ${
-                                  it.rating === r ? "bg-amber-500 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                                }`}
-                              >
-                                {r}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="mt-2">
-                          <textarea
-                            value={it.comments || ""}
-                            onChange={(e) =>
-                              setItemFeedbacks((prev) => {
-                                const copy = [...prev];
-                                copy[idx] = { ...copy[idx], comments: e.target.value };
-                                return copy;
-                              })
-                            }
-                            rows={2}
-                            placeholder="Optional comment about this item"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
-                          />
+                      <div key={idx} className="border border-gray-100 rounded-lg p-3 flex items-center justify-between">
+                        <div className="font-medium text-gray-800">{it.name}</div>
+                        <div className="flex items-center gap-2">
+                          {[1, 2, 3, 4, 5].map((r) => (
+                            <button
+                              key={r}
+                              type="button"
+                              onClick={() =>
+                                setItemFeedbacks((prev) => {
+                                  const copy = [...prev];
+                                  copy[idx] = { ...copy[idx], rating: r };
+                                  return copy;
+                                })
+                              }
+                              className={`w-8 h-8 rounded-md text-sm font-medium transition-colors ${
+                                it.rating === r ? "bg-amber-500 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                              }`}
+                            >
+                              {r}
+                            </button>
+                          ))}
                         </div>
                       </div>
                     ))}
                   </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Overall comments (optional)</label>
-                    <textarea
-                      value={comments}
-                      onChange={(e) => setComments(e.target.value)}
-                      rows={2}
-                      placeholder="General comments about the meal (portion size, variety...)"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
-                    />
-                  </div>
                 </div>
               ) : (
-                <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Rating (1–5)</label>
-                    <div className="flex gap-2">
-                      {[1, 2, 3, 4, 5].map((r) => (
-                        <button
-                          key={r}
-                          type="button"
-                          onClick={() => setRating(r)}
-                          className={`w-10 h-10 rounded-lg font-medium transition-colors ${
-                            rating === r ? "bg-amber-500 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                          }`}
-                        >
-                          {r}
-                        </button>
-                      ))}
-                    </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Rating (1–5)</label>
+                  <div className="flex gap-2">
+                    {[1, 2, 3, 4, 5].map((r) => (
+                      <button
+                        key={r}
+                        type="button"
+                        onClick={() => setRating(r)}
+                        className={`w-10 h-10 rounded-lg font-medium transition-colors ${
+                          rating === r ? "bg-amber-500 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                        }`}
+                      >
+                        {r}
+                      </button>
+                    ))}
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Comments (optional)</label>
-                    <textarea
-                      value={comments}
-                      onChange={(e) => setComments(e.target.value)}
-                      rows={3}
-                      placeholder="e.g. Taste, portion size, variety..."
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
-                    />
-                  </div>
-                </>
+                </div>
               )}
               <button
                 type="submit"
@@ -723,7 +675,7 @@ export default function EmployeeFeedbackPage() {
                 <h2 className="text-lg font-semibold text-gray-900">My past feedback</h2>
                 <p className="text-sm text-gray-600 mt-0.5">
                   {list.length === 0
-                    ? "Your submitted ratings and comments"
+                    ? "Your submitted ratings"
                     : `Showing ${(feedbackPage - 1) * FEEDBACK_PAGE_SIZE + 1}–${Math.min(feedbackPage * FEEDBACK_PAGE_SIZE, list.length)} of ${list.length} (most recent first)`}
                 </p>
               </div>
@@ -743,7 +695,6 @@ export default function EmployeeFeedbackPage() {
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Meal</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Rating</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Comments</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
@@ -758,16 +709,13 @@ export default function EmployeeFeedbackPage() {
                         <td className="px-4 py-3 text-sm text-gray-600 capitalize">{f.mealType}</td>
                         <td className="px-4 py-3">
                           <div className="inline-flex items-center gap-2">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${ratingBadgeBg(f.rating)} ${ratingBadgeText(f.rating)}`}>
-                            {f.rating} / 5
-                          </span>
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${ratingBadgeBg(f.rating)} ${ratingBadgeText(f.rating)}`}>
+                              {f.rating} / 5
+                            </span>
                             {f.items && f.items.length > 0 && (
                               <span className="text-xs text-gray-500">Itemized</span>
                             )}
                           </div>
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-600 max-w-[200px] truncate">
-                          {f.comments || "—"}
                         </td>
                       </tr>
                     ))}
@@ -792,19 +740,15 @@ export default function EmployeeFeedbackPage() {
                       <div>
                         <div className="text-sm text-gray-600">Overall rating</div>
                         <div className={`text-xl font-semibold ${ratingTextClass(modalFeedback.rating)}`}>{modalFeedback.rating} / 5</div>
-                        {modalFeedback.comments && <p className="text-sm text-gray-700 mt-1">{modalFeedback.comments}</p>}
                       </div>
                       {modalFeedback.items && modalFeedback.items.length > 0 && (
                         <div>
-                          <div className="text-sm text-gray-600 mb-2">Per-item feedback</div>
+                          <div className="text-sm text-gray-600 mb-2">Per-item ratings</div>
                           <ul className="space-y-2">
                             {modalFeedback.items.map((it: any, idx: number) => (
-                              <li key={idx} className="border rounded p-2">
-                                <div className="flex items-center justify-between">
-                                  <div className="font-medium text-gray-800">{it.name}</div>
-                                  <div className={`${ratingBadgeText(it.rating)} font-semibold`}>{it.rating} / 5</div>
-                                </div>
-                                {it.comments && <div className="text-sm text-gray-600 mt-1">{it.comments}</div>}
+                              <li key={idx} className="border rounded p-2 flex items-center justify-between">
+                                <div className="font-medium text-gray-800">{it.name}</div>
+                                <div className={`${ratingBadgeText(it.rating)} font-semibold`}>{it.rating} / 5</div>
                               </li>
                             ))}
                           </ul>

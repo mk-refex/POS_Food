@@ -63,7 +63,6 @@ interface FeedbackReportRecord {
   date: string;
   mealType: "breakfast" | "lunch";
   rating: number;
-  comments?: string | null;
   createdAt?: string | Date | null;
 }
 
@@ -1184,7 +1183,6 @@ export default function Reports() {
         "Employee Name",
         "Company",
         "Rating",
-        "Comments",
       ];
       fileName = "feedback-report";
     } else {
@@ -1250,7 +1248,6 @@ export default function Reports() {
           record.employeeName || "Unknown",
           record.companyName || "—",
           record.rating,
-          record.comments || "—",
         ]),
       ];
     } else {
@@ -2164,9 +2161,6 @@ export default function Reports() {
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             Rating
                           </th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Comments
-                          </th>
                         </tr>
                       </thead>
                       <tbody className="bg-white divide-y divide-gray-200">
@@ -2207,9 +2201,6 @@ export default function Reports() {
                                 <i className="ri-star-fill text-amber-400 text-xs"></i>
                               </span>
                             </td>
-                            <td className="px-4 py-3 text-sm text-gray-700 max-w-xs">
-                              {f.comments || "—"}
-                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -2235,20 +2226,16 @@ export default function Reports() {
                             </div>
                             <div>
                               <div className="text-sm text-gray-600">Overall rating</div>
-                      <div className={`text-xl font-semibold ${ratingTextClass(feedbackModalItem.rating)}`}>{feedbackModalItem.rating} / 5</div>
-                              {feedbackModalItem.comments && <p className="text-sm text-gray-700 mt-1">{feedbackModalItem.comments}</p>}
+                              <div className={`text-xl font-semibold ${ratingTextClass(feedbackModalItem.rating)}`}>{feedbackModalItem.rating} / 5</div>
                             </div>
                             {feedbackModalItem.items && feedbackModalItem.items.length > 0 && (
                               <div>
                                 <div className="text-sm text-gray-600 mb-2">Per-item feedback</div>
                                 <ul className="space-y-2">
                                   {feedbackModalItem.items.map((it: any, idx: number) => (
-                                    <li key={idx} className="border rounded p-2">
-                                      <div className="flex items-center justify-between">
-                                        <div className="font-medium text-gray-800">{it.name}</div>
-                          <div className={`${ratingBadgeText(it.rating)} font-semibold`}>{it.rating} / 5</div>
-                                      </div>
-                                      {it.comments && <div className="text-sm text-gray-600 mt-1">{it.comments}</div>}
+                                    <li key={idx} className="border rounded p-2 flex items-center justify-between">
+                                      <div className="font-medium text-gray-800">{it.name}</div>
+                                      <div className={`${ratingBadgeText(it.rating)} font-semibold`}>{it.rating} / 5</div>
                                     </li>
                                   ))}
                                 </ul>
@@ -2365,7 +2352,7 @@ export default function Reports() {
                   </div>
 
                   {/* Rating distribution bars */}
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 lg:col-span-2">
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 lg:col-span-3">
                     <h3 className="text-sm font-semibold text-slate-800 mb-2">
                       Rating distribution
                     </h3>
