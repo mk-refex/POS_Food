@@ -1,5 +1,10 @@
 import { useState, useEffect } from "react";
-import { useNavigate, useLocation, Navigate, useSearchParams } from "react-router-dom";
+import {
+  useNavigate,
+  useLocation,
+  Navigate,
+  useSearchParams,
+} from "react-router-dom";
 import {
   Box,
   Typography,
@@ -11,11 +16,7 @@ import {
 } from "@mui/material";
 import refexLogo from "../../assets/refex-logo.png";
 import loginBg from "../../assets/login-bg.png";
-import {
-  PersonOutlined,
-  PinOutlined,
-  ErrorOutline,
-} from "@mui/icons-material";
+import { PersonOutlined, PinOutlined, ErrorOutline } from "@mui/icons-material";
 import { setEmployeeSession, isEmployeeAuthenticated } from "../../api/client";
 
 const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
@@ -24,7 +25,8 @@ const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
   token_failed: "Google sign-in failed (token). Try again.",
   profile_failed: "Could not load your Google profile.",
   no_email: "Your Google account has no email.",
-  employee_not_found: "Your email is not registered as an employee. Contact admin.",
+  employee_not_found:
+    "Your email is not registered as an employee. Contact admin.",
   login_failed: "Google sign-in failed. Try again.",
 };
 
@@ -38,7 +40,9 @@ export default function EmployeeLoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
-  const from = (location.state as { from?: { pathname: string } })?.from?.pathname || "/employee/dashboard";
+  const from =
+    (location.state as { from?: { pathname: string } })?.from?.pathname ||
+    "/employee/dashboard";
 
   const [otpStep, setOtpStep] = useState<"input" | "verify">("input");
   const [identifier, setIdentifier] = useState("");
@@ -50,11 +54,14 @@ export default function EmployeeLoginPage() {
     const err = searchParams.get("error");
     if (err && GOOGLE_ERROR_MESSAGES[err]) {
       setError(GOOGLE_ERROR_MESSAGES[err]);
-      setSearchParams((p) => {
-        const next = new URLSearchParams(p);
-        next.delete("error");
-        return next;
-      }, { replace: true });
+      setSearchParams(
+        (p) => {
+          const next = new URLSearchParams(p);
+          next.delete("error");
+          return next;
+        },
+        { replace: true },
+      );
     }
   }, [searchParams, setSearchParams]);
 
@@ -62,7 +69,8 @@ export default function EmployeeLoginPage() {
     return <Navigate to={from} replace />;
   }
 
-  const baseUrl = (import.meta as any).env?.VITE_API_URL || "http://localhost:5000/api";
+  const baseUrl =
+    (import.meta as any).env?.VITE_API_URL || "http://localhost:5000/api";
   const api = (path: string, options?: RequestInit) =>
     fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
       ...options,
@@ -138,21 +146,74 @@ export default function EmployeeLoginPage() {
       }}
     >
       <Box sx={{ position: "fixed", top: 16, left: 16, zIndex: 10 }}>
-        <Box component="img" src={refexLogo} alt="Logo" sx={{ width: 120, height: 48, objectFit: "contain" }} />
+        <Box
+          component="img"
+          src={refexLogo}
+          alt="Logo"
+          sx={{ width: 120, height: 48, objectFit: "contain" }}
+        />
       </Box>
 
-      <Box sx={{ display: { xs: "none", md: "flex" }, alignItems: "center", justifyContent: "center", p: 6 }}>
+      <Box
+        sx={{
+          display: { xs: "none", md: "flex" },
+          alignItems: "center",
+          justifyContent: "center",
+          p: 6,
+        }}
+      >
         <Box sx={{ maxWidth: 480 }}>
           <Typography variant="h4" fontWeight={800} gutterBottom>
             Employee Portal
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            View your food consumption and transaction history. Sign in with OTP (email) or with Google.
+            View your food consumption and transaction history. Sign in with OTP
+            (email) or with Google.
           </Typography>
+          <Box
+            sx={{
+              mt: 6,
+              display: "grid",
+              gridTemplateColumns: "repeat(3, 1fr)",
+              gap: 2,
+            }}
+          >
+            <Box
+              sx={{
+                height: 8,
+                bgcolor: "primary.main",
+                opacity: 0.2,
+                borderRadius: 1,
+              }}
+            />
+            <Box
+              sx={{
+                height: 8,
+                bgcolor: "success.main",
+                opacity: 0.2,
+                borderRadius: 1,
+              }}
+            />
+            <Box
+              sx={{
+                height: 8,
+                bgcolor: "warning.main",
+                opacity: 0.2,
+                borderRadius: 1,
+              }}
+            />
+          </Box>
         </Box>
       </Box>
 
-      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", p: { xs: 3, md: 6 } }}>
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          p: { xs: 3, md: 6 },
+        }}
+      >
         <Box
           sx={{
             p: { xs: 3, md: 4 },
@@ -177,8 +238,13 @@ export default function EmployeeLoginPage() {
 
           {otpStep === "input" && (
             <Box component="form" onSubmit={handleRequestOtp}>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                Sign in with OTP — enter your details and we’ll email you a code.
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ mb: 1.5 }}
+              >
+                Sign in with OTP — enter your details and we’ll email you a
+                code.
               </Typography>
               <TextField
                 fullWidth
@@ -186,10 +252,22 @@ export default function EmployeeLoginPage() {
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
                 placeholder="e.g. EMPX001234 or you@company.com"
-                InputProps={{ startAdornment: <InputAdornment position="start"><PersonOutlined /></InputAdornment> }}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <PersonOutlined />
+                    </InputAdornment>
+                  ),
+                }}
                 sx={{ mb: 2 }}
               />
-              <Button type="submit" fullWidth variant="contained" size="large" disabled={loading}>
+              <Button
+                type="submit"
+                fullWidth
+                variant="contained"
+                size="large"
+                disabled={loading}
+              >
                 {loading ? <CircularProgress size={24} /> : "Send OTP"}
               </Button>
             </Box>
@@ -204,22 +282,46 @@ export default function EmployeeLoginPage() {
                 fullWidth
                 label="6-digit OTP"
                 value={otp}
-                onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                onChange={(e) =>
+                  setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))
+                }
                 inputProps={{ maxLength: 6 }}
-                InputProps={{ startAdornment: <InputAdornment position="start"><PinOutlined /></InputAdornment> }}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <PinOutlined />
+                    </InputAdornment>
+                  ),
+                }}
                 sx={{ mb: 2 }}
               />
-              <Button type="submit" fullWidth variant="contained" size="large" disabled={loading || otp.length !== 6}>
+              <Button
+                type="submit"
+                fullWidth
+                variant="contained"
+                size="large"
+                disabled={loading || otp.length !== 6}
+              >
                 {loading ? <CircularProgress size={24} /> : "Verify & sign in"}
               </Button>
-              <Button fullWidth sx={{ mt: 1 }} onClick={() => { setOtpStep("input"); }}>
+              <Button
+                fullWidth
+                sx={{ mt: 1 }}
+                onClick={() => {
+                  setOtpStep("input");
+                }}
+              >
                 Change employee code / email
               </Button>
             </Box>
           )}
 
           <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: "divider" }}>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, textAlign: "center" }}>
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ mb: 1.5, textAlign: "center" }}
+            >
               Or
             </Typography>
             <Button
@@ -228,13 +330,33 @@ export default function EmployeeLoginPage() {
               size="large"
               href={`${baseUrl}/employee-auth/google?state=${encodeURIComponent(window.location.origin)}`}
               sx={{ textTransform: "none" }}
-              startIcon={<Box component="span" sx={{ width: 20, height: 20, "& img": { width: "100%", height: "100%" } }}><img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" /></Box>}
+              startIcon={
+                <Box
+                  component="span"
+                  sx={{
+                    width: 20,
+                    height: 20,
+                    "& img": { width: "100%", height: "100%" },
+                  }}
+                >
+                  <img
+                    src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+                    alt="Google"
+                  />
+                </Box>
+              }
             >
               Sign in with Google
             </Button>
           </Box>
 
-          <Typography variant="caption" color="text.secondary" display="block" textAlign="center" sx={{ mt: 3 }}>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            display="block"
+            textAlign="center"
+            sx={{ mt: 3 }}
+          >
             Powered by Refex AI Team © {new Date().getFullYear()}
           </Typography>
         </Box>
