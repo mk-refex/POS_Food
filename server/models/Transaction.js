@@ -21,6 +21,7 @@ Transaction.init(
     items: { type: DataTypes.JSON, allowNull: false },
     totalItems: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
     totalAmount: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
+    isSelfBill: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   },
   { sequelize, modelName: 'Transaction', tableName: 'transactions' },
 );

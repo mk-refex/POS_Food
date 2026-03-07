@@ -218,7 +218,9 @@ export default function Login() {
               error={Boolean(fieldErrors.identifier)}
               required
             >
-              <InputLabel htmlFor="login-identifier">Email or Username</InputLabel>
+              <InputLabel htmlFor="login-identifier">
+                Email or Username
+              </InputLabel>
               <OutlinedInput
                 id="login-identifier"
                 type="text"
@@ -347,6 +349,11 @@ export default function Login() {
           >
             Need help? Contact Refex IT support.
           </Typography>
+          {/* <Box textAlign="center" mt={1}>
+            <Link href="/employee/login" variant="body2">
+              Employee portal — view your transactions
+            </Link>
+          </Box> */}
         </Box>
       </Box>
     </Box>

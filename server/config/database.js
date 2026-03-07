@@ -16,12 +16,31 @@ export async function initializeDatabase() {
   try {
     await sequelize.authenticate();
     // Models import must come after sequelize is created to bind associations
-    const { applyAssociations } = await import("../models/index.js");
+    const { applyAssociations, SsoConfig, SmtpConfig, Feedback, Guest } = await import("../models/index.js");
     applyAssociations();
-    // Avoid MySQL "Too many keys specified" by not using alter in production
-    // Use plain sync to ensure connection without attempting to recreate indexes
-    await sequelize.sync();
-    // Ensure username column exists (older DBs won't auto-add new columns on sync)
+    // Avoid MySQL "Too many keys specified" by not using alter on all tables
+    await sequelize.sync({alter: true});
+    // Ensure sso_config has all columns (e.g. redirect_uri) if model was updated
+    try {
+      await SsoConfig.sync({ alter: false });
+    } catch (e) {
+      console.warn("SsoConfig.sync(alter) skipped:", e?.message || e);
+    }
+    try {
+      await SmtpConfig.sync({ alter: true });
+    } catch (e) {
+      console.warn("SmtpConfig.sync(alter) skipped:", e?.message || e);
+    }
+    try {
+      await Feedback.sync({ alter: true });
+    } catch (e) {
+      console.warn("Feedback.sync(alter) skipped:", e?.message || e);
+    }
+    try {
+      await Guest.sync({ alter: true });
+    } catch (e) {
+      console.warn("Guest.sync(alter) skipped:", e?.message || e);
+    }
   } catch (error) {
     throw error;
   }

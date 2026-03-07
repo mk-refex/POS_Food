@@ -1,5 +1,6 @@
 import { Employee, SupportStaff, Guest, PriceMaster } from '../models/index.js';
 import { Op } from 'sequelize';
+import { emitMasterUpdated } from '../socket.js';
 
 // Employee Controller
 export const getEmployees = async (req, res) => {
@@ -67,7 +68,7 @@ export const createEmployee = async (req, res) => {
       createdBy: req.user?.name || 'Admin',
       createdDate: new Date().toISOString().split('T')[0]
     });
-
+    emitMasterUpdated();
     res.status(201).json(employee);
   } catch (error) {
     console.error('Error creating employee:', error);
@@ -102,7 +103,7 @@ export const updateEmployee = async (req, res) => {
       location,
       qrCode
     });
-
+    emitMasterUpdated();
     res.json(employee);
   } catch (error) {
     console.error('Error updating employee:', error);
@@ -120,6 +121,7 @@ export const deleteEmployee = async (req, res) => {
     }
 
     await employee.update({ isActive: false });
+    emitMasterUpdated();
     res.json({ message: 'Employee deleted successfully' });
   } catch (error) {
     console.error('Error deleting employee:', error);
@@ -180,7 +182,7 @@ export const createSupportStaff = async (req, res) => {
       createdBy: req.user?.name || 'Admin',
       createdDate: new Date().toISOString().split('T')[0]
     });
-
+    emitMasterUpdated();
     res.status(201).json(staff);
   } catch (error) {
     console.error('Error creating support staff:', error);
@@ -213,7 +215,7 @@ export const updateSupportStaff = async (req, res) => {
       companyName,
       biometricData
     });
-
+    emitMasterUpdated();
     res.json(staff);
   } catch (error) {
     console.error('Error updating support staff:', error);
@@ -231,6 +233,7 @@ export const deleteSupportStaff = async (req, res) => {
     }
 
     await staff.update({ isActive: false });
+    emitMasterUpdated();
     res.json({ message: 'Support staff deleted successfully' });
   } catch (error) {
     console.error('Error deleting support staff:', error);
@@ -271,15 +274,17 @@ export const getGuests = async (req, res) => {
 
 export const createGuest = async (req, res) => {
   try {
-    const { name, companyName } = req.body;
+    const { name, companyName, expirationDate } = req.body;
+    const exp = expirationDate && String(expirationDate).trim() ? String(expirationDate).trim().slice(0, 10) : null;
 
     const guest = await Guest.create({
       name,
       companyName,
       createdBy: req.user?.name || 'Admin',
-      createdDate: new Date().toISOString().split('T')[0]
+      createdDate: new Date().toISOString().split('T')[0],
+      expirationDate: exp,
     });
-
+    emitMasterUpdated();
     res.status(201).json(guest);
   } catch (error) {
     console.error('Error creating guest:', error);
@@ -290,14 +295,18 @@ export const createGuest = async (req, res) => {
 export const updateGuest = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, companyName } = req.body;
+    const { name, companyName, expirationDate } = req.body;
+    const exp = expirationDate !== undefined ? (expirationDate && String(expirationDate).trim() ? String(expirationDate).trim().slice(0, 10) : null) : undefined;
 
     const guest = await Guest.findByPk(id);
     if (!guest) {
       return res.status(404).json({ error: 'Guest not found' });
     }
 
-    await guest.update({ name, companyName });
+    const updates = { name, companyName };
+    if (exp !== undefined) updates.expirationDate = exp;
+    await guest.update(updates);
+    emitMasterUpdated();
     res.json(guest);
   } catch (error) {
     console.error('Error updating guest:', error);
@@ -315,6 +324,7 @@ export const deleteGuest = async (req, res) => {
     }
 
     await guest.update({ isActive: false });
+    emitMasterUpdated();
     res.json({ message: 'Guest deleted successfully' });
   } catch (error) {
     console.error('Error deleting guest:', error);
