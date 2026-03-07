@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { Op } from 'sequelize';
 import { Transaction, Employee } from '../models/index.js';
 import { getMonthlySummaryForCustomer, sendTransactionNotificationEmail } from '../services/transactionEmail.js';
+import { emitTransactionCreated } from '../socket.js';
 
 const createSchema = z.object({
   customerType: z.enum(['employee', 'guest', 'supportStaff']),
@@ -93,6 +94,7 @@ export async function createTransaction(req, res) {
   }
 
   const trx = await Transaction.create({ ...payload, userId: user?.userId ?? null });
+  emitTransactionCreated();
 
   // Send notification email to employee when billed (non-blocking)
   if (customerType === 'employee' && customerId) {

@@ -1,5 +1,6 @@
 import { Op } from 'sequelize';
 import { Menu } from '../models/index.js';
+import { emitMenuUpdated } from '../socket.js';
 
 export async function listMenus(req, res) {
   try {
@@ -35,6 +36,7 @@ export async function upsertMenu(req, res) {
     } else {
       await menu.update({ items: payload.items, published: payload.published });
     }
+    emitMenuUpdated();
     return res.json(menu);
   } catch (error) {
     console.error('Upsert menu error:', error);
@@ -49,6 +51,7 @@ export async function deleteMenu(req, res) {
       return res.status(400).json({ message: 'date and mealType query params required' });
     }
     const deleted = await Menu.destroy({ where: { date, mealType } });
+    if (deleted) emitMenuUpdated();
     return res.json({ deleted: deleted > 0 });
   } catch (error) {
     console.error('Delete menu error:', error);

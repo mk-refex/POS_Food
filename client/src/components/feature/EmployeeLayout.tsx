@@ -13,7 +13,7 @@ export default function EmployeeLayout({ children }: EmployeeLayoutProps) {
   const [user, setUser] = useState<{ employeeName: string; employeeId: string; companyName?: string } | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     const saved = localStorage.getItem("app_theme");
-    return saved === "light" ? "light" : "dark";
+    return saved === "dark" ? "dark" : "light";
   });
   const [now, setNow] = useState<Date>(new Date());
   const formatClock = (d: Date) => {
@@ -33,6 +33,11 @@ export default function EmployeeLayout({ children }: EmployeeLayoutProps) {
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
+    if (theme === "dark") {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
     localStorage.setItem("app_theme", theme);
   }, [theme]);
 

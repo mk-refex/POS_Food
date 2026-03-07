@@ -10,6 +10,7 @@ interface EmployeeSidebarProps {
 const menuItems = [
   { id: "dashboard", label: "Dashboard", icon: "ri-dashboard-line", path: "/employee/dashboard" },
   { id: "menu", label: "Food Menu", icon: "ri-restaurant-line", path: "/employee/menu" },
+  { id: "guests", label: "Guests", icon: "ri-user-star-line", path: "/employee/guests" },
   { id: "feedback", label: "Feedback & Review", icon: "ri-star-smile-line", path: "/employee/feedback" },
 ];
 

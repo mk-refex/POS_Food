@@ -1,9 +1,10 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import EmployeeLayout from "../../components/feature/EmployeeLayout";
 import { apiFetchEmployee } from "../../api/client";
 import { canGiveFeedbackByTime, getFeedbackTimeMessage } from "../../utils/feedbackEligibility";
 import { ratingTextClass, ratingBadgeBg, ratingBadgeText } from "../../utils/ratingColor";
+import { useSocketEvent } from "../../contexts/SocketContext";
 
 interface MenuItem {
   name: string;
@@ -101,27 +102,31 @@ export default function EmployeeFeedbackPage() {
     [calendarYear, calendarMonth]
   );
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        setLoading(true);
-        setMenuError("");
-        const [menuRes, txRes] = await Promise.all([
-          apiFetchEmployee(`/employee/menu?startDate=${startDate}&endDate=${endDate}`),
-          apiFetchEmployee(`/employee/transactions?startDate=${startDate}&endDate=${endDate}`),
-        ]);
-        setMenus(Array.isArray(menuRes) ? menuRes : []);
-        setTransactions(Array.isArray(txRes) ? txRes : []);
-      } catch (err: any) {
-        setMenuError(err.message || "Failed to load menu");
-        setMenus([]);
-        setTransactions([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
+  const loadMenuAndTransactions = useCallback(async () => {
+    try {
+      setLoading(true);
+      setMenuError("");
+      const [menuRes, txRes] = await Promise.all([
+        apiFetchEmployee(`/employee/menu?startDate=${startDate}&endDate=${endDate}`),
+        apiFetchEmployee(`/employee/transactions?startDate=${startDate}&endDate=${endDate}`),
+      ]);
+      setMenus(Array.isArray(menuRes) ? menuRes : []);
+      setTransactions(Array.isArray(txRes) ? txRes : []);
+    } catch (err: any) {
+      setMenuError(err.message || "Failed to load menu");
+      setMenus([]);
+      setTransactions([]);
+    } finally {
+      setLoading(false);
+    }
   }, [startDate, endDate]);
+
+  useEffect(() => {
+    loadMenuAndTransactions();
+  }, [loadMenuAndTransactions]);
+
+  useSocketEvent("menu:updated", loadMenuAndTransactions);
+  useSocketEvent("transaction:created", loadMenuAndTransactions);
 
   useEffect(() => {
     if (dateFromUrl && /^\d{4}-\d{2}-\d{2}$/.test(dateFromUrl)) {

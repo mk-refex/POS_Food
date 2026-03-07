@@ -16,6 +16,7 @@ import EmployeeDashboardPage from "../pages/employee/DashboardPage";
 import EmployeeMenuPage from "../pages/employee/MenuPage";
 import EmployeeFeedbackPage from "../pages/employee/FeedbackPage";
 import EmployeeProfilePage from "../pages/employee/ProfilePage";
+import EmployeeGuestsPage from "../pages/employee/GuestsPage";
 import EmployeeProtectedRoute from "../components/EmployeeProtectedRoute";
 
 const routes: RouteObject[] = [
@@ -64,6 +65,14 @@ const routes: RouteObject[] = [
     element: (
       <EmployeeProtectedRoute>
         <EmployeeFeedbackPage />
+      </EmployeeProtectedRoute>
+    ),
+  },
+  {
+    path: "/employee/guests",
+    element: (
+      <EmployeeProtectedRoute>
+        <EmployeeGuestsPage />
       </EmployeeProtectedRoute>
     ),
   },

@@ -4,6 +4,17 @@ import { Transaction, SmtpConfig } from '../models/index.js';
 
 const LOGO_URL = 'https://refexrenewables.com/img/logo.png';
 
+/** Base URL for the employee portal (e.g. https://yourapp.com). Set FRONTEND_URL in env for production. */
+function getEmployeePortalBaseUrl() {
+  const base = (process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/$/, '');
+  return base;
+}
+
+/** Full URL for employee sign-in page. */
+function getEmployeeLoginUrl() {
+  return `${getEmployeePortalBaseUrl()}/employee/login`;
+}
+
 /**
  * Send a single email via configured SMTP. Used for OTP and other transactional emails.
  * @param {string} to - recipient email
@@ -124,6 +135,9 @@ function buildNotificationHtml(transaction, customerName, monthlySummary) {
       <strong>Amount for this transaction: ₹${Number(transaction.totalAmount || 0).toLocaleString('en-IN')}</strong>
     </p>
     ${monthText ? `<p style="color: #555; margin: 0 0 16px 0; line-height: 1.5; font-size: 14px;">Monthly summary – ${monthText}</p>` : ''}
+    <p style="color: #333; margin: 20px 0 0 0;">
+      <a href="${getEmployeeLoginUrl()}" style="color: #2563eb; font-weight: 600; text-decoration: none;">Sign in to your account</a> for more details (transactions, menu, feedback).
+    </p>
     <p style="color: #666; margin: 24px 0 0 0; padding: 12px; background: #f9f9f9; border-radius: 6px; font-size: 13px; line-height: 1.5;">
       If this transaction was not made by you, please contact your administrator.
     </p>
@@ -162,7 +176,8 @@ export async function sendTransactionNotificationEmail(transaction, toEmail, cus
     });
     const from = config.fromEmail || config.user || 'noreply@localhost';
     const fromName = config.fromName || 'Food Billing';
-    const plain = `Food Billing Confirmation\n\nYou have consumed ${(transaction.items || []).filter(i => i.name === 'Breakfast' || i.name === 'Lunch').map(i => i.name).join(' and ') || 'meal(s)'} on ${transaction.date} at ${transaction.time}. Amount: ₹${Number(transaction.totalAmount || 0).toLocaleString('en-IN')}.\n\nIf this was not you, please contact your administrator.`;
+    const loginUrl = getEmployeeLoginUrl();
+    const plain = `Food Billing Confirmation\n\nYou have consumed ${(transaction.items || []).filter(i => i.name === 'Breakfast' || i.name === 'Lunch').map(i => i.name).join(' and ') || 'meal(s)'} on ${transaction.date} at ${transaction.time}. Amount: ₹${Number(transaction.totalAmount || 0).toLocaleString('en-IN')}.\n\nSign in to your account for more details: ${loginUrl}\n\nIf this was not you, please contact your administrator.`;
     await transporter.sendMail({
       from: config.fromName ? `"${fromName}" <${from}>` : from,
       to: toEmail,

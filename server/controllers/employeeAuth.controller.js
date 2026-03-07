@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { Op } from 'sequelize';
 import { Employee } from '../models/index.js';
 import { signToken } from '../middleware/auth.js';
+import { emitTransactionCreated } from '../socket.js';
 
 // In-memory OTP store: key = mobileNumber (normalized) or employeeId, value = { otp, expiresAt, employeeId }
 const otpStore = new Map();
@@ -297,38 +298,106 @@ export async function googleCallback(req, res) {
   }
 }
 
-/** Preview self-bill: returns employee info, suggested meal and price, monthly summary */
+/** Determine meal from server local time. Same logic used in preview and actual bill so they match. Breakfast 6–11, Lunch 12–14:59, else lunch. */
+function getMealByServerTime() {
+  const h = new Date().getHours();
+  if (h >= 6 && h <= 11) return 'breakfast';
+  if (h >= 12 && h <= 15) return 'lunch';
+  return 'lunch';     
+}
+
+/** Resolve employee by employeeId or email (identifier containing @). Email is normalized to lowercase. */
+async function findEmployeeByIdOrEmail(Employee, identifier) {
+  let id = String(identifier || '').trim();
+  if (!id) return null;
+  const byEmail = id.includes('@');
+  if (byEmail) id = id.toLowerCase();
+  const where = byEmail ? { email: id, isActive: true } : { employeeId: id, isActive: true };
+  return Employee.findOne({
+    where,
+    attributes: ['employeeId', 'employeeName', 'companyName', 'entity', 'email', 'mobileNumber'],
+  });
+}
+
+/** Resolve guest by id; validate isActive and expirationDate (if set, must be >= today). */
+async function findGuestForSelfBill(Guest, guestId) {
+  const id = parseInt(String(guestId).replace(/^GUEST:?\s*/i, ''), 10);
+  if (!Number.isFinite(id)) return null;
+  const guest = await Guest.findOne({
+    where: { id, isActive: true },
+    attributes: ['id', 'name', 'companyName', 'expirationDate'],
+  });
+  if (!guest) return null;
+  const exp = guest.expirationDate ? String(guest.expirationDate).slice(0, 10) : null;
+  const today = new Date().toISOString().split('T')[0];
+  if (exp && exp < today) return null;
+  return guest;
+}
+
+/** Preview self-bill: returns employee or guest info, suggested meal and price. Supports employee (id/email) or GUEST:id. */
 export async function selfBillPreview(req, res) {
   try {
-    const employeeId = String(req.query.employeeId || req.query.id || req.query.employee || '').trim();
-    if (!employeeId) return res.status(400).json({ message: 'employeeId required' });
-    const { Employee, PriceMaster, Transaction } = await import('../models/index.js');
-    const employee = await Employee.findOne({
-      where: { employeeId, isActive: true },
-      attributes: ['employeeId', 'employeeName', 'companyName', 'entity', 'email', 'mobileNumber'],
-    });
+    const identifier = String(req.query.employeeId || req.query.id || req.query.employee || req.query.email || '').trim();
+    if (!identifier) return res.status(400).json({ message: 'employeeId, email, or GUEST:id required' });
+    const { Employee, Guest, PriceMaster, Transaction } = await import('../models/index.js');
+    const now = new Date();
+    const meal = getMealByServerTime();
+    const priceMaster = await PriceMaster.findOne({ where: { isActive: true } });
+    const today = now.toISOString().split('T')[0];
+
+    if (identifier.toUpperCase().startsWith('GUEST:')) {
+      const guest = await findGuestForSelfBill(Guest, identifier);
+      if (!guest) return res.status(404).json({ message: 'Guest not found or QR code has expired' });
+      const price = meal === 'breakfast' ? Number(priceMaster?.companyBreakfast || 135) : Number(priceMaster?.companyLunch || 165);
+      const monthlySummary = { breakfastCount: 0, lunchCount: 0 };
+      let warnings = {};
+      try {
+        const prior = await Transaction.findAll({
+          where: { date: today, customerType: 'guest', customerId: String(guest.id) },
+        });
+        const totals = prior.reduce((acc, t) => {
+          for (const it of t.items || []) {
+            if (it.isException) continue;
+            if (it.name === 'Breakfast') acc.breakfast += Number(it.quantity || 0);
+            if (it.name === 'Lunch') acc.lunch += Number(it.quantity || 0);
+          }
+          return acc;
+        }, { breakfast: 0, lunch: 0 });
+        const qtyReq = Math.max(1, Number(req.query.quantity || 1));
+        if (meal === 'breakfast' && totals.breakfast + qtyReq > 1) warnings.breakfastExceeded = true;
+        if (meal === 'lunch' && totals.lunch + qtyReq > 1) warnings.lunchExceeded = true;
+        const priorExceptionExists = prior.some((t) =>
+          (t.items || []).some((it) => String(it.name).toLowerCase() === meal && !!it.isException)
+        );
+        if (priorExceptionExists) warnings.priorException = true;
+      } catch (e) { /* ignore */ }
+      return res.json({
+        customerType: 'guest',
+        employee: {
+          employeeId: `GUEST:${guest.id}`,
+          employeeName: guest.name,
+          companyName: guest.companyName,
+          email: null,
+        },
+        meal,
+        price,
+        monthlySummary,
+        warnings,
+      });
+    }
+
+    const employee = await findEmployeeByIdOrEmail(Employee, identifier);
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
-    // determine meal by server local time
-    const now = new Date();
-    const h = now.getHours();
-    let meal = 'lunch';
-    if (h >= 6 && h < 10) meal = 'breakfast';
-    else if (h >= 12 && h < 15) meal = 'lunch';
-    else meal = 'lunch';
-
-    const priceMaster = await PriceMaster.findOne({ where: { isActive: true } });
     const price = meal === 'breakfast' ? Number(priceMaster?.employeeBreakfast || 20) : Number(priceMaster?.employeeLunch || 48);
-
     const { getMonthlySummaryForCustomer } = await import('../services/transactionEmail.js');
-    const monthlySummary = await getMonthlySummaryForCustomer('employee', employee.employeeId, now.toISOString().split('T')[0]);
+    const monthlySummary = await getMonthlySummaryForCustomer('employee', employee.employeeId, today);
 
-    // compute per-day totals to determine warnings (quantity requested can be provided)
     const qtyReq = Math.max(1, Number(req.query.quantity || 1));
     let warnings = {};
     try {
       const prior = await Transaction.findAll({
-        where: { date: now.toISOString().split('T')[0], customerType: 'employee', customerId: employee.employeeId },
+        where: { date: today, customerType: 'employee', customerId: employee.employeeId },
       });
       const totals = prior.reduce((acc, t) => {
         for (const it of t.items || []) {
@@ -340,16 +409,14 @@ export async function selfBillPreview(req, res) {
       }, { breakfast: 0, lunch: 0 });
       if (meal === 'breakfast' && totals.breakfast + qtyReq > 1) warnings.breakfastExceeded = true;
       if (meal === 'lunch' && totals.lunch + qtyReq > 1) warnings.lunchExceeded = true;
-      // detect prior exception entries for this meal
       const priorExceptionExists = prior.some((t) =>
         (t.items || []).some((it) => String(it.name).toLowerCase() === meal && !!it.isException)
       );
       if (priorExceptionExists) warnings.priorException = true;
-    } catch (e) {
-      // ignore
-    }
+    } catch (e) { /* ignore */ }
 
     return res.json({
+      customerType: 'employee',
       employee: {
         employeeId: employee.employeeId,
         employeeName: employee.employeeName,
@@ -367,74 +434,92 @@ export async function selfBillPreview(req, res) {
   }
 }
 
-/** Create self-bill transaction for given employeeId */
+/** Create self-bill transaction for employee or guest (identifier = employeeId/email or GUEST:id). */
 export async function selfBill(req, res) {
   try {
     const body = req.body || {};
-    const employeeId = String(body.employeeId || body.id || '').trim();
-    if (!employeeId) return res.status(400).json({ message: 'employeeId required' });
-    const { Employee, PriceMaster, Transaction } = await import('../models/index.js');
-    const employee = await Employee.findOne({
-      where: { employeeId, isActive: true },
-      attributes: ['employeeId', 'employeeName', 'companyName', 'email'],
-    });
+    const identifier = String(body.employeeId || body.id || body.email || '').trim();
+    if (!identifier) return res.status(400).json({ message: 'employeeId, email, or GUEST:id required' });
+    const { Employee, Guest, PriceMaster, Transaction } = await import('../models/index.js');
+    const { Op } = await import('sequelize');
+    const now = new Date();
+    const meal = getMealByServerTime();
+    const date = now.toISOString().split('T')[0];
+    const time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase();
+    const qty = Math.max(1, Number(body.quantity || 1));
+    const priceMaster = await PriceMaster.findOne({ where: { isActive: true } });
+
+    if (identifier.toUpperCase().startsWith('GUEST:')) {
+      const guest = await findGuestForSelfBill(Guest, identifier);
+      if (!guest) return res.status(404).json({ message: 'Guest not found or QR code has expired' });
+      const price = meal === 'breakfast' ? Number(priceMaster?.companyBreakfast || 135) : Number(priceMaster?.companyLunch || 165);
+      const items = [{
+        id: meal === 'breakfast' ? 1 : 2,
+        name: meal === 'breakfast' ? 'Breakfast' : 'Lunch',
+        quantity: qty,
+        actualPrice: price,
+        ...(body.forceException ? { isException: true } : {}),
+      }];
+      const lockKey = `guest:${guest.id}:${date}:${meal}:${qty}`;
+      if (selfBillLocks.has(lockKey)) return res.status(200).json({ message: 'Duplicate request', duplicate: true });
+      selfBillLocks.add(lockKey);
+      try {
+        const tenSecondsAgo = new Date(Date.now() - 10 * 1000);
+        const existing = await Transaction.findOne({
+          where: { customerType: 'guest', customerId: String(guest.id), date, createdAt: { [Op.gte]: tenSecondsAgo } },
+          order: [['id', 'DESC']],
+        });
+        if (existing) {
+          const existingItems = JSON.stringify(existing.items || []);
+          const newItems = JSON.stringify(items);
+          if (existingItems === newItems) return res.status(200).json({ transaction: existing.toJSON(), duplicate: true });
+        }
+        const trx = await Transaction.create({
+          customerType: 'guest',
+          customerId: String(guest.id),
+          customerName: guest.name,
+          companyName: guest.companyName || null,
+          date,
+          time,
+          items,
+          totalItems: qty,
+          totalAmount: Math.round(price * qty),
+          userId: req.user?.userId ?? (body.userId ? Number(body.userId) : null),
+          isSelfBill: true,
+        });
+        emitTransactionCreated();
+        return res.status(201).json({ transaction: trx.toJSON() });
+      } finally {
+        selfBillLocks.delete(lockKey);
+      }
+    }
+
+    const employee = await findEmployeeByIdOrEmail(Employee, identifier);
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
-    // determine meal
-    const now = new Date();
-    const h = now.getHours();
-    let meal = 'lunch';
-    if (h >= 6 && h < 10) meal = 'breakfast';
-    else if (h >= 12 && h < 15) meal = 'lunch';
-    else meal = 'lunch';
-
-    const priceMaster = await PriceMaster.findOne({ where: { isActive: true } });
     const price = meal === 'breakfast' ? Number(priceMaster?.employeeBreakfast || 20) : Number(priceMaster?.employeeLunch || 48);
-
-    const date = now.toISOString().split('T')[0];
-    // force time format like "11:14:24 AM" (uppercase AM/PM)
-    const time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase();
-
-    const qty = Math.max(1, Number(body.quantity || 1));
     const items = [{
-      // include numeric id for meal: 1 = Breakfast, 2 = Lunch
       id: meal === 'breakfast' ? 1 : 2,
       name: meal === 'breakfast' ? 'Breakfast' : 'Lunch',
       quantity: qty,
       actualPrice: price,
+      ...(body.forceException ? { isException: true } : {}),
     }];
 
-    // mark as exception when employee explicitly forced an exception (via modal)
-    if (body.forceException) {
-      items[0].isException = true;
-    }
-
-    // Lock per employee/date/meal/qty to avoid concurrent duplicate processing
     const lockKey = `${employee.employeeId}:${date}:${meal}:${qty}`;
-    if (selfBillLocks.has(lockKey)) {
-      // Someone else is processing same bill
-      return res.status(200).json({ message: 'Duplicate request', duplicate: true });
-    }
+    if (selfBillLocks.has(lockKey)) return res.status(200).json({ message: 'Duplicate request', duplicate: true });
     selfBillLocks.add(lockKey);
 
     try {
-      // Dedup: avoid duplicate transactions within short window (compare items)
       const tenSecondsAgo = new Date(Date.now() - 10 * 1000);
       const existing = await Transaction.findOne({
-        where: {
-          customerType: 'employee',
-          customerId: employee.employeeId,
-          date,
-          createdAt: { [Op.gte]: tenSecondsAgo },
-        },
+        where: { customerType: 'employee', customerId: employee.employeeId, date, createdAt: { [Op.gte]: tenSecondsAgo } },
         order: [['id', 'DESC']],
       });
       if (existing) {
         const existingItems = JSON.stringify(existing.items || []);
-        const newItems = JSON.stringify(items || []);
-        if (existingItems === newItems) {
-          return res.status(200).json({ transaction: existing.toJSON(), duplicate: true });
-        }
+        const newItems = JSON.stringify(items);
+        if (existingItems === newItems) return res.status(200).json({ transaction: existing.toJSON(), duplicate: true });
       }
 
       const trx = await Transaction.create({
@@ -448,9 +533,10 @@ export async function selfBill(req, res) {
         totalItems: qty,
         totalAmount: Math.round(price * qty),
         userId: req.user?.userId ?? (body.userId ? Number(body.userId) : null),
+        isSelfBill: true,
       });
+      emitTransactionCreated();
 
-      // send notification email (non-blocking) — same as createTransaction flow
       const { getMonthlySummaryForCustomer, sendTransactionNotificationEmail } = await import('../services/transactionEmail.js');
       setImmediate(async () => {
         try {
@@ -465,19 +551,6 @@ export async function selfBill(req, res) {
     } finally {
       selfBillLocks.delete(lockKey);
     }
-
-    // send notification email (non-blocking) — same as createTransaction flow
-    const { getMonthlySummaryForCustomer, sendTransactionNotificationEmail } = await import('../services/transactionEmail.js');
-    setImmediate(async () => {
-      try {
-        const monthlySummary = await getMonthlySummaryForCustomer('employee', employee.employeeId, date);
-        await sendTransactionNotificationEmail(trx.toJSON(), employee.email, employee.employeeName || 'Employee', monthlySummary);
-      } catch (e) {
-        console.error('selfBill send email error:', e?.message || e);
-      }
-    });
-
-    return res.status(201).json({ transaction: trx.toJSON() });
   } catch (e) {
     console.error('selfBill error:', e?.message || e);
     return res.status(500).json({ message: 'Failed to create self-bill' });

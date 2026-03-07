@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import Layout from '../../components/feature/Layout';
 import AnimatedNumber from '../../components/AnimatedNumber';
 import { apiFetch } from '../../api/client';
+import { useSocketEvent } from '../../contexts/SocketContext';
 
 interface Transaction {
   id: number;
@@ -48,10 +49,14 @@ export default function Dashboard() {
     loadDashboardData();
   }, []);
 
-  const loadDashboardData = async (overrideStart?: string, overrideEnd?: string) => {
+  useSocketEvent('transaction:created', () => loadDashboardData(undefined, undefined, true));
+
+  const loadDashboardData = async (overrideStart?: string, overrideEnd?: string, silent = false) => {
     try {
-      setLoading(true);
-      setError('');
+      if (!silent) {
+        setLoading(true);
+        setError('');
+      }
 
       // Load transactions
       const params = new URLSearchParams();
@@ -132,10 +137,10 @@ export default function Dashboard() {
 
       setCompanyWiseData(companyArray);
     } catch (err: any) {
-      setError(err.message || 'Failed to load dashboard data');
+      if (!silent) setError(err.message || 'Failed to load dashboard data');
       console.error('Dashboard error:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 

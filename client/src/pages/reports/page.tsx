@@ -2,11 +2,13 @@ import { useState, useEffect, useMemo } from "react";
 import Layout from "../../components/feature/Layout";
 import { apiFetch, mastersApi, isAdmin } from "../../api/client";
 import { ratingTextClass, ratingBadgeText } from "../../utils/ratingColor";
+import { useSocketEvent } from "../../contexts/SocketContext";
 
 // Align client types with server's /transactions response
 interface TransactionRecord {
   id: number | string;
   userId?: number | null;
+  isSelfBill?: boolean;
   customerType: "employee" | "guest" | "supportStaff";
   customerId?: string | null;
   customerName?: string | null;
@@ -151,6 +153,13 @@ export default function Reports() {
     initializeData();
   }, []);
 
+  useSocketEvent('transaction:created', () => loadReportData());
+  useSocketEvent('master:updated', () => {
+    loadEmployees();
+    loadSupportStaff();
+    loadReportData();
+  });
+
   const loadUsers = async (): Promise<User[]> => {
     try {
       const usersList: User[] = await apiFetch("/admin/users");
@@ -196,20 +205,18 @@ export default function Reports() {
     return date || time || "N/A";
   };
 
-  // Update createdBy field when users are loaded
+  // Update createdBy field when users are loaded (keep "Self" for self-billed transactions)
   useEffect(() => {
     if (isAdmin() && users.length > 0 && reportData.length > 0) {
-      // Update employee report data with correct user names
       setReportData(prev => prev.map(record => ({
         ...record,
-        createdBy: getUserName(record.userId)
+        createdBy: record.isSelfBill ? "Self" : getUserName(record.userId)
       })));
     }
     if (isAdmin() && users.length > 0 && supportStaffReportData.length > 0) {
-      // Update support staff report data with correct user names
       setSupportStaffReportData(prev => prev.map(record => ({
         ...record,
-        createdBy: getUserName(record.userId)
+        createdBy: record.isSelfBill ? "Self" : getUserName(record.userId)
       })));
     }
   }, [users]);
@@ -358,7 +365,8 @@ export default function Reports() {
           return {
             id: bill.id,
             userId: bill.userId,
-            createdBy: getUserName(bill.userId, usersToUse),
+            isSelfBill: !!bill.isSelfBill,
+            createdBy: bill.isSelfBill ? "Self" : getUserName(bill.userId, usersToUse),
             employeeId: isGuest ? "GUEST" : bill.customerId || "N/A",
             employeeName: isGuest ? bill.customerName || "Unknown Guest" : bill.customerName || "Unknown",
             company: bill.companyName || "N/A",
@@ -441,7 +449,8 @@ export default function Reports() {
           return {
             id: bill.id,
             userId: bill.userId,
-            createdBy: getUserName(bill.userId, usersToUse),
+            isSelfBill: !!bill.isSelfBill,
+            createdBy: bill.isSelfBill ? "Self" : getUserName(bill.userId, usersToUse),
             staffId: bill.customerId || "N/A",
             staffName: bill.customerName || "Unknown",
             designation: (supportStaff.find((s) => s.staffId === bill.customerId)?.designation) || "N/A",
@@ -639,7 +648,8 @@ export default function Reports() {
             return {
               id: bill.id,
               userId: bill.userId,
-              createdBy: getUserName(bill.userId, users),
+              isSelfBill: !!bill.isSelfBill,
+              createdBy: bill.isSelfBill ? "Self" : getUserName(bill.userId, users),
               employeeId: isGuest ? "GUEST" : bill.customerId || "N/A",
               employeeName: isGuest ? bill.customerName || "Unknown Guest" : bill.customerName || "Unknown",
               company: bill.companyName || "N/A",
@@ -679,7 +689,8 @@ export default function Reports() {
             return {
               id: bill.id,
               userId: bill.userId,
-              createdBy: getUserName(bill.userId, users),
+              isSelfBill: !!bill.isSelfBill,
+              createdBy: bill.isSelfBill ? "Self" : getUserName(bill.userId, users),
               staffId: bill.customerId || "N/A",
               staffName: bill.customerName || "Unknown",
               designation: (supportStaff.find((s) => s.staffId === bill.customerId)?.designation) || "N/A",
@@ -965,7 +976,8 @@ export default function Reports() {
           return {
             id: bill.id,
             userId: bill.userId,
-            createdBy: getUserName(bill.userId, users),
+            isSelfBill: !!bill.isSelfBill,
+            createdBy: bill.isSelfBill ? "Self" : getUserName(bill.userId, users),
             employeeId: isGuest ? "GUEST" : bill.customerId || "N/A",
             employeeName: isGuest ? bill.customerName || "Unknown Guest" : bill.customerName || "Unknown",
             company: bill.companyName || "N/A",
@@ -1000,7 +1012,8 @@ export default function Reports() {
           return {
             id: bill.id,
             userId: bill.userId,
-            createdBy: getUserName(bill.userId, users),
+            isSelfBill: !!bill.isSelfBill,
+            createdBy: bill.isSelfBill ? "Self" : getUserName(bill.userId, users),
             staffId: bill.customerId || "N/A",
             staffName: bill.customerName || "Unknown",
             designation: (supportStaff.find((s) => s.staffId === bill.customerId)?.designation) || "N/A",

@@ -3,6 +3,7 @@ import Layout from "../../components/feature/Layout";
 import Pagination from "../../components/Pagination";
 import { mastersApi, apiFetch } from "../../api/client";
 import AdminFoodMenuPanel from "./AdminFoodMenuPanel";
+import { useSocketEvent } from "../../contexts/SocketContext";
 
 interface Employee {
   id: number;
@@ -70,7 +71,7 @@ export default function Master() {
   });
   const [showImportModal, setShowImportModal] = useState(false);
   const [importType, setImportType] = useState<
-    "employee" | "supportStaff" | "billing"
+    "employee" | "supportStaff" | "billing" | "menu"
   >("employee");
 
   const [formData, setFormData] = useState({
@@ -230,6 +231,8 @@ export default function Master() {
       setIsLoading(false);
     }
   };
+
+  useSocketEvent('master:updated', loadMasterData);
 
   // Company names are now loaded directly in loadMasterData from all sources (employees, support staff, guests)
 
@@ -596,7 +599,74 @@ export default function Master() {
         // first row is headers but not used directly; keeping for potential validation
         // const headers = rows[0].map((h) => String(h).trim());
 
-        if (importType === "employee") {
+        /** Normalize date to YYYY-MM-DD. Accepts DD-MM-YYYY, DD/MM/YYYY, YYYY-MM-DD, or Excel serial number. */
+        const normalizeDate = (val: unknown): string | null => {
+          if (val == null || val === "") return null;
+          if (typeof val === "number" && !Number.isNaN(val)) {
+            const serial = Math.floor(val);
+            if (serial < 1) return null;
+            const utc = (serial - 25569) * 86400 * 1000;
+            const d = new Date(utc);
+            if (Number.isNaN(d.getTime())) return null;
+            const y = d.getUTCFullYear();
+            const m = d.getUTCMonth() + 1;
+            const day = d.getUTCDate();
+            return `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+          }
+          const s = String(val).trim();
+          if (!s) return null;
+          const parts = s.split(/[-/]/).map((p) => p.trim());
+          if (parts.length !== 3) return null;
+          const a = parseInt(parts[0], 10);
+          const b = parseInt(parts[1], 10);
+          const c = parseInt(parts[2], 10);
+          if (Number.isNaN(a) || Number.isNaN(b) || Number.isNaN(c)) return null;
+          if (a > 31 && b <= 12 && c <= 31) return `${a}-${String(b).padStart(2, "0")}-${String(c).padStart(2, "0")}`;
+          if (a <= 31 && b <= 12 && c >= 1900) return `${c}-${String(b).padStart(2, "0")}-${String(a).padStart(2, "0")}`;
+          return null;
+        };
+
+        if (importType === "menu") {
+          const firstRow = rows[0] || [];
+          const headerRow = firstRow.map((h) => String(h ?? "").trim().toLowerCase());
+          const dateIdx = headerRow.findIndex((h) => h === "date");
+          const mealIdx = headerRow.findIndex((h) => h === "meal type" || h === "mealtype");
+          const nameIdx = headerRow.findIndex((h) => h === "name");
+          const descIdx = headerRow.findIndex((h) => h === "description" || h === "desc");
+          const useHeader = dateIdx >= 0 && mealIdx >= 0 && nameIdx >= 0;
+          const mapByKey: Record<string, { date: string; mealType: "breakfast" | "lunch"; items: Array<{ name: string; description?: string }> }> = {};
+          for (let i = useHeader ? 1 : 0; i < rows.length; i++) {
+            const rawRow = rows[i];
+            if (!Array.isArray(rawRow) || rawRow.length === 0) continue;
+            const row = rawRow.map((v) => (v != null && typeof v === "object" ? "" : String(v ?? "").trim()));
+            const dateVal = useHeader ? row[dateIdx] : row[0];
+            const mealVal = useHeader ? row[mealIdx] : row[1];
+            const nameVal = (useHeader ? row[nameIdx] : row[2]) ?? "";
+            const descVal = useHeader ? (descIdx >= 0 ? row[descIdx] : "") : (row[3] ?? "");
+            const rawDateVal = useHeader ? rawRow[dateIdx] : rawRow[0];
+            const date = normalizeDate(typeof rawDateVal === "number" ? rawDateVal : dateVal);
+            const mealLower = String(mealVal ?? "").toLowerCase();
+            const mealType = mealLower.startsWith("l") ? "lunch" : "breakfast";
+            if (!date || !String(nameVal).trim()) continue;
+            const key = `${date}|${mealType}`;
+            if (!mapByKey[key]) mapByKey[key] = { date, mealType, items: [] };
+            const desc = String(descVal ?? "").trim();
+            const description = desc && desc !== "undefined" ? desc : undefined;
+            mapByKey[key].items.push({ name: String(nameVal).trim(), ...(description !== undefined ? { description } : {}) });
+          }
+          let upserted = 0;
+          for (const key of Object.keys(mapByKey)) {
+            const { date, mealType, items } = mapByKey[key];
+            const validItems = items.filter((it) => it.name.trim());
+            if (validItems.length === 0) continue;
+            try {
+              await mastersApi.upsertMenu({ date, mealType, items: validItems, published: true });
+              upserted++;
+            } catch {}
+          }
+          await loadMasterData();
+          alert(`Imported menu for ${upserted} date/meal combination(s).`);
+        } else if (importType === "employee") {
           const newEmployees: Employee[] = [];
           for (let i = 1; i < rows.length; i++) {
             const values = rows[i].map((v) => String(v).trim());
@@ -803,6 +873,7 @@ export default function Master() {
                   <option value="employee">Employee Data</option>
                   <option value="supportStaff">Support Staff Data</option>
                   <option value="billing">Billing History</option>
+                  <option value="menu">Menu Data</option>
                 </select>
 
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -810,7 +881,7 @@ export default function Master() {
                 </label>
                 <input
                   type="file"
-                  accept=".csv"
+                  accept=".csv,.xlsx,.xls"
                   onChange={handleImport}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
@@ -823,6 +894,8 @@ export default function Master() {
                       "CSV Format: Staff ID, Name, Designation, Company Name, Biometric Data"}
                     {importType === "billing" &&
                       "CSV Format: Date, Time, Is Guest, Is Support Staff, Employee ID, Employee Name, Company Name, Breakfast Count, Lunch Count, Total Amount"}
+                    {importType === "menu" &&
+                      "Excel/CSV: Date, Meal Type, Name, Description. Date as DD-MM-YYYY or YYYY-MM-DD. Meal Type: Breakfast or Lunch. One row per menu item."}
                   </p>
                 </div>
               </div>

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import Layout from "../../components/feature/Layout";
 import { apiFetch, mastersApi } from "../../api/client";
 import { buildReceiptHtml } from "./receiptBuilder";
+import { useSocketEvent } from "../../contexts/SocketContext";
 
 export default function Billing() {
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -53,10 +54,6 @@ export default function Billing() {
   const receiptRef = useRef<HTMLDivElement | null>(null);
 
   // Load data from API on component mount
-  useEffect(() => {
-    loadMasterData();
-  }, []);
-
   const loadMasterData = async () => {
     try {
       // Load price master first to ensure menu prices are up-to-date
@@ -114,6 +111,12 @@ export default function Billing() {
       alert("Failed to load master data. Please refresh the page.");
     }
   };
+
+  useEffect(() => {
+    loadMasterData();
+  }, []);
+
+  useSocketEvent('master:updated', loadMasterData);
 
   // Extract employee ID from URL (e.g., https://contacts.dev.refex.group/vcard/VRPL025062)
   const extractEmployeeIdFromUrl = (searchText: string): string | null => {

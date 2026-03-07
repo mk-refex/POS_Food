@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { mastersApi, isAdmin } from "../../api/client";
 import { canGiveFeedbackByTime } from "../../utils/feedbackEligibility";
+import { useSocketEvent } from "../../contexts/SocketContext";
 
 interface MenuItem {
   name: string;
@@ -136,22 +137,25 @@ export default function AdminFoodMenuPanel() {
     [calendarYear, calendarMonth]
   );
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        setLoading(true);
-        setError("");
-        const res = await mastersApi.getMenus({ startDate, endDate });
-        setMenus(Array.isArray(res) ? res : []);
-      } catch (err: any) {
-        setError(err?.message || "Failed to load menus");
-        setMenus([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
+  const loadMenus = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
+      const res = await mastersApi.getMenus({ startDate, endDate });
+      setMenus(Array.isArray(res) ? res : []);
+    } catch (err: any) {
+      setError(err?.message || "Failed to load menus");
+      setMenus([]);
+    } finally {
+      setLoading(false);
+    }
   }, [startDate, endDate]);
+
+  useEffect(() => {
+    loadMenus();
+  }, [loadMenus]);
+
+  useSocketEvent("menu:updated", loadMenus);
 
   const menuByDate = useMemo(() => {
     const map: Record<string, { breakfast: boolean; lunch: boolean }> = {};

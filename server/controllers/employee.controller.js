@@ -1,5 +1,5 @@
 import { Op } from 'sequelize';
-import { Transaction, Menu, Feedback, Employee } from '../models/index.js';
+import { Transaction, Menu, Feedback, Employee, Guest } from '../models/index.js';
 
 /** List transactions for the logged-in employee only */
 export async function getMyTransactions(req, res) {
@@ -252,5 +252,111 @@ export async function getMyFeedback(req, res) {
   }
   const list = await Feedback.findAll({ where, order: [['date', 'DESC'], ['id', 'DESC']] });
   return res.json(list);
+}
+
+/** List guests created by this employee. Uses isActive for status; auto-expires guests when expirationDate has passed. */
+export async function getMyGuests(req, res) {
+  try {
+    const { employeeId } = req.employee;
+    const today = new Date().toISOString().split('T')[0];
+
+    // Automatically set isActive = false for guests whose expirationDate has passed
+    await Guest.update(
+      { isActive: false },
+      {
+        where: {
+          createdBy: employeeId,
+          isActive: true,
+          [Op.and]: [{ expirationDate: { [Op.ne]: null } }, { expirationDate: { [Op.lt]: today } }],
+        },
+      }
+    );
+
+    const guests = await Guest.findAll({
+      where: { createdBy: employeeId },
+      order: [['id', 'DESC']],
+      attributes: ['id', 'name', 'companyName', 'createdDate', 'expirationDate', 'isActive'],
+    });
+    const list = guests.map((g) => {
+      const json = g.toJSON();
+      const status = json.isActive ? 'active' : 'expired';
+      return { ...json, status };
+    });
+    return res.json(list);
+  } catch (e) {
+    console.error('getMyGuests error:', e?.message || e);
+    return res.status(500).json({ message: 'Failed to fetch guests' });
+  }
+}
+
+/** Distinct company names for guest dropdown (from Employee table). */
+export async function getGuestCompanies(req, res) {
+  try {
+    const companies = await Employee.findAll({
+      attributes: ['companyName'],
+      where: { isActive: true },
+      group: ['companyName'],
+      raw: true,
+    });
+    const names = [...new Set((companies || []).map((c) => c.companyName).filter(Boolean))].sort();
+    return res.json(names);
+  } catch (e) {
+    console.error('getGuestCompanies error:', e?.message || e);
+    return res.status(500).json({ message: 'Failed to fetch companies' });
+  }
+}
+
+/** Create one or more guests (bulk). Body: { guests: [{ name, companyName, expirationDate? }] } or single { name, companyName, expirationDate? }. */
+export async function createMyGuests(req, res) {
+  try {
+    const { employeeId } = req.employee;
+    const body = req.body || {};
+    const list = Array.isArray(body.guests) ? body.guests : [body];
+    if (list.length === 0) return res.status(400).json({ message: 'No guest data provided' });
+    const today = new Date().toISOString().split('T')[0];
+    const created = [];
+    for (const item of list) {
+      const name = String(item.name || '').trim();
+      const companyName = String(item.companyName || '').trim();
+      if (!name || !companyName) continue;
+      const guest = await Guest.create({
+        name,
+        companyName,
+        createdBy: employeeId,
+        createdDate: today,
+        expirationDate: item.expirationDate && String(item.expirationDate).trim() ? String(item.expirationDate).trim().slice(0, 10) : null,
+        isActive: true,
+      });
+      created.push(guest);
+    }
+    if (created.length === 0) return res.status(400).json({ message: 'Valid name and company required' });
+    return res.status(201).json(Array.isArray(body.guests) ? created : created[0]);
+  } catch (e) {
+    console.error('createMyGuests error:', e?.message || e);
+    return res.status(500).json({ message: 'Failed to create guests' });
+  }
+}
+
+/** Manually expire a guest's QR (set isActive = false and expirationDate to yesterday). Only for guests created by this employee. */
+export async function expireMyGuest(req, res) {
+  try {
+    const { id } = req.params;
+    const { employeeId } = req.employee;
+    const guestId = parseInt(id, 10);
+    if (Number.isNaN(guestId)) return res.status(400).json({ message: 'Invalid guest id' });
+    const guest = await Guest.findOne({
+      where: { id: guestId, createdBy: employeeId, isActive: true },
+    });
+    if (!guest) return res.status(404).json({ message: 'Guest not found' });
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    await guest.update({ isActive: false, expirationDate: yesterdayStr });
+    const json = guest.toJSON();
+    return res.json({ ...json, status: 'expired' });
+  } catch (e) {
+    console.error('expireMyGuest error:', e?.message || e);
+    return res.status(500).json({ message: 'Failed to expire guest' });
+  }
 }
 

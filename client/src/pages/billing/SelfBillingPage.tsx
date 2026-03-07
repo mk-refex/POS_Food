@@ -17,6 +17,23 @@ function extractEmployeeIdFromUrl(url: string) {
   }
 }
 
+/** Parse vCard text (e.g. from QR) and return the first EMAIL value, or null. Uses INTERNET:...TEL to isolate the email value. */
+function extractEmailFromVCard(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed.includes("BEGIN:VCARD") || !trimmed.includes("END:VCARD")) return null;
+  const lower = trimmed.toLowerCase();
+  const internetIdx = lower.indexOf("internet:");
+  const telIdx = lower.indexOf("tel;");
+  if (internetIdx === -1) return null;
+  const start = internetIdx + "internet:".length;
+  const end = telIdx !== -1 ? telIdx : trimmed.length;
+  const value = trimmed.slice(start, end);
+  const normalized = value.replace(/\s+/g, "").trim();
+  const emailPattern = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+  const match = normalized.match(emailPattern);
+  return match ? match[0].trim() : null;
+}
+
 export default function SelfBillingPage() {
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -28,6 +45,18 @@ export default function SelfBillingPage() {
   const [modalOpen, setModalOpen] = useState<boolean>(false);
   const timerRef = useRef<any>(null);
   const scanAutoTimer = useRef<any>(null);
+  const errorClearTimerRef = useRef<any>(null);
+  const [resolvingScan, setResolvingScan] = useState(false);
+
+  const ERROR_DISPLAY_MS = 5000;
+  const setErrorWithAutoClear = (message: string) => {
+    if (errorClearTimerRef.current) clearTimeout(errorClearTimerRef.current);
+    setError(message);
+    errorClearTimerRef.current = setTimeout(() => {
+      setError(null);
+      errorClearTimerRef.current = null;
+    }, ERROR_DISPLAY_MS);
+  };
   const [todayMenu, setTodayMenu] = useState<{
     breakfast?: any[];
     lunch?: any[];
@@ -66,42 +95,76 @@ export default function SelfBillingPage() {
     const val = v.trim();
     if (lockedRef.current) return;
     if (!val) return;
-    if (!val.includes("http") && !val.includes("/vcard/")) return;
+    if (errorClearTimerRef.current) {
+      clearTimeout(errorClearTimerRef.current);
+      errorClearTimerRef.current = null;
+    }
     setError(null);
-    const empId = extractEmployeeIdFromUrl(val);
-    if (!empId) {
-      setError("Unable to parse employee ID from scanned URL");
+    setResolvingScan(true);
+
+    // Guest QR from employee-created guest (GUEST:id)
+    const isGuest = val.toUpperCase().startsWith("GUEST:");
+    const isUrl = !isGuest && (val.includes("http") || val.includes("/vcard/"));
+    const isVCard = !isGuest && val.includes("BEGIN:VCARD") && val.includes("INTERNET:") && val.includes("END:VCARD");
+    let identifier: string | null = null;
+    if (isGuest) {
+      identifier = val;
+    } else if (isUrl) {
+      identifier = extractEmployeeIdFromUrl(val);
+      if (!identifier) {
+        setResolvingScan(false);
+        setErrorWithAutoClear("Unable to parse employee ID from scanned URL");
+        return;
+      }
+    } else if (isVCard) {
+      identifier = extractEmailFromVCard(val);
+      if (!identifier) {
+        setResolvingScan(false);
+        setErrorWithAutoClear("No URL or vCard email found in scan");
+        return;
+      }
+      identifier = identifier.toLowerCase();
+    } else {
+      setResolvingScan(false);
+      setErrorWithAutoClear("Invalid QR code. Please scan a valid employee or guest QR (Refex vcard URL, vCard with email, or guest QR).");
       return;
     }
-    // lock to avoid duplicate preview/confirm flows
+
     lockedRef.current = true;
     try {
-      const res = await employeeAuthApi.selfBillPreview(empId);
+      const res = await employeeAuthApi.selfBillPreview(identifier);
       setPreview(res);
-      // open modal if server returned warnings (already billed)
+      setResolvingScan(false);
       if (res && ((res.warnings && Object.keys(res.warnings).length > 0) || res.warnings?.priorException)) {
         setModalOpen(true);
       } else {
         setModalOpen(false);
       }
     } catch (err: any) {
-      setError(err?.message || "Preview failed");
+      setErrorWithAutoClear(err?.message || "Preview failed");
       lockedRef.current = false;
+      setResolvingScan(false);
     }
     if (inputRef.current) inputRef.current.value = "";
     inputRef.current?.focus();
   };
 
-  const handleScanInput = async (e: React.KeyboardEvent<HTMLInputElement>) => {
-    const el = e.target as HTMLInputElement;
-    if (e.key === "Enter") {
-      await processScanned(el.value);
-      return;
-    }
+  const SCAN_COMPLETE_DELAY_MS = 1000;
+
+  const handleScanKeyDown = () => {
+    setError(null);
+    setResolvingScan(true);
+  };
+
+  const handleScanChange = () => {
+    setResolvingScan(true);
     if (scanAutoTimer.current) clearTimeout(scanAutoTimer.current);
     scanAutoTimer.current = setTimeout(() => {
-      processScanned(el.value);
-    }, 120);
+      scanAutoTimer.current = null;
+      const value = inputRef.current?.value?.trim() ?? "";
+      if (value) processScanned(value);
+      else setResolvingScan(false);
+    }, SCAN_COMPLETE_DELAY_MS);
   };
 
   useEffect(() => {
@@ -210,7 +273,7 @@ export default function SelfBillingPage() {
       setError(null);
       lockedRef.current = false;
     } catch (err: any) {
-      setError(err?.message || "Billing failed");
+      setErrorWithAutoClear(err?.message || "Billing failed");
     } finally {
       setProcessing(false);
       inputRef.current?.focus();
@@ -343,24 +406,40 @@ export default function SelfBillingPage() {
                 </p>
                 <input
                   ref={inputRef}
-                  onKeyDown={handleScanInput}
+                  onKeyDown={handleScanKeyDown}
+                  onChange={handleScanChange}
+                  onPaste={handleScanChange}
                   className="opacity-0 absolute left-0 top-0"
+                  aria-label="Scan QR code"
                 />
                 {error && <div className="text-red-600 mt-4">{error}</div>}
               </div>
             </div>
 
             <div className="bg-white rounded-lg shadow p-6">
-              {preview ? (
+              {resolvingScan ? (
+                <div className="py-4">
+                  <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden max-w-xs mx-auto">
+                    <div className="h-full w-2/5 bg-indigo-600 rounded-full animate-pulse" />
+                  </div>
+                  <p className="text-sm text-gray-500 mt-3 text-center">
+                    Reading scan…
+                  </p>
+                </div>
+              ) : preview ? (
                 <>
-                  <h3 className="text-lg font-semibold mb-3">Employee</h3>
+                  <h3 className="text-lg font-semibold mb-3">
+                    {preview.customerType === "guest" ? "Guest" : "Employee"}
+                  </h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-1 text-sm text-gray-700">
                       <div className="font-medium">
                         {preview.employee.employeeName}
                       </div>
                       <div className="text-xs text-gray-500">
-                        ID: {preview.employee.employeeId}
+                        {preview.customerType === "guest"
+                          ? "Guest QR"
+                          : `ID: ${preview.employee.employeeId}`}
                       </div>
                       <div className="text-xs text-gray-500">
                         Company: {preview.employee.companyName}
@@ -400,7 +479,7 @@ export default function SelfBillingPage() {
                 </>
               ) : (
                 <div className="text-sm text-gray-500">
-                  Employee details will appear here after scan.
+                  Employee or Guest details will appear here after scan.
                 </div>
               )}
             </div>

@@ -4,6 +4,7 @@
  */
 
 import { ApiConfig, Employee, SupportStaff } from '../models/index.js';
+import { emitMasterUpdated } from '../socket.js';
 
 const SUPPORT_STAFF_DESIGNATIONS = ['Driver', 'Office Assistant'];
 
@@ -147,6 +148,7 @@ export async function runHrmsSync() {
       }
     }
 
+    emitMasterUpdated();
     return result;
   } catch (error) {
     console.error('HRMS sync error:', error);

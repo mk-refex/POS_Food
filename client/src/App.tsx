@@ -2,6 +2,7 @@ import { BrowserRouter, useLocation } from 'react-router-dom'
 import { AppRoutes } from './router'
 import './styles/animations.css'
 import { useEffect } from 'react';
+import { SocketProvider } from './contexts/SocketContext';
 
 function RouteAnimator() {
   const loc = useLocation();
@@ -26,10 +27,12 @@ function RouteAnimator() {
 
 function App() {
   return (
-    <BrowserRouter basename={__BASE_PATH__}>
-      <RouteAnimator />
-      <AppRoutes />
-    </BrowserRouter>
+    <SocketProvider>
+      <BrowserRouter basename={__BASE_PATH__}>
+        <RouteAnimator />
+        <AppRoutes />
+      </BrowserRouter>
+    </SocketProvider>
   )
 }
 

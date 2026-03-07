@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import EmployeeLayout from "../../components/feature/EmployeeLayout";
 import { apiFetchEmployee } from "../../api/client";
 import { canGiveFeedbackByTime, getFeedbackTimeMessage } from "../../utils/feedbackEligibility";
+import { useSocketEvent } from "../../contexts/SocketContext";
 
 interface MenuItem {
   name: string;
@@ -51,27 +52,31 @@ export default function EmployeeMenuPage() {
     [calendarYear, calendarMonth]
   );
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        setLoading(true);
-        setError("");
-        const [menuRes, txRes] = await Promise.all([
-          apiFetchEmployee(`/employee/menu?startDate=${startDate}&endDate=${endDate}`),
-          apiFetchEmployee(`/employee/transactions?startDate=${startDate}&endDate=${endDate}`),
-        ]);
-        setMenus(Array.isArray(menuRes) ? menuRes : []);
-        setTransactions(Array.isArray(txRes) ? txRes : []);
-      } catch (err: any) {
-        setError(err.message || "Failed to load menu");
-        setMenus([]);
-        setTransactions([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
+      const [menuRes, txRes] = await Promise.all([
+        apiFetchEmployee(`/employee/menu?startDate=${startDate}&endDate=${endDate}`),
+        apiFetchEmployee(`/employee/transactions?startDate=${startDate}&endDate=${endDate}`),
+      ]);
+      setMenus(Array.isArray(menuRes) ? menuRes : []);
+      setTransactions(Array.isArray(txRes) ? txRes : []);
+    } catch (err: any) {
+      setError(err.message || "Failed to load menu");
+      setMenus([]);
+      setTransactions([]);
+    } finally {
+      setLoading(false);
+    }
   }, [startDate, endDate]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useSocketEvent("menu:updated", load);
+  useSocketEvent("transaction:created", load);
 
   const menuByDate = useMemo(() => {
     const map: Record<string, { breakfast: boolean; lunch: boolean }> = {};

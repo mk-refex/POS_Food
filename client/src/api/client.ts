@@ -3,6 +3,12 @@ export function getApiBaseUrl() {
   return url.replace(/\/$/, '');
 }
 
+/** Base URL for WebSocket (same host as API, no /api path). */
+export function getSocketUrl() {
+  const apiUrl = getApiBaseUrl();
+  return apiUrl.replace(/\/api\/?$/, '') || apiUrl;
+}
+
 function getToken() {
   return localStorage.getItem('auth_token') || '';
 }

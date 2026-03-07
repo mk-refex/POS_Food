@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import EmployeeLayout from "../../components/feature/EmployeeLayout";
 import AnimatedNumber from "../../components/AnimatedNumber";
 import { apiFetchEmployee } from "../../api/client";
+import { useSocketEvent } from "../../contexts/SocketContext";
 
 interface DashboardData {
   summary: {
@@ -102,18 +103,23 @@ export default function EmployeeDashboardPage() {
     loadChartData();
   }, [chartTab, chartStartDate, chartEndDate]);
 
-  const loadDashboard = async () => {
+  const loadDashboard = async (silent = false) => {
     try {
-      setLoading(true);
-      setError("");
+      if (!silent) {
+        setLoading(true);
+        setError("");
+      }
       const res = await apiFetchEmployee("/employee/dashboard");
       setData(res);
     } catch (err: any) {
-      setError(err.message || "Failed to load dashboard");
+      if (!silent) setError(err.message || "Failed to load dashboard");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
+
+  // When a bill happens (admin or self-bill), refresh dashboard in place without full loading overlay
+  useSocketEvent("transaction:created", () => loadDashboard(true));
 
   const loadChartData = async () => {
     try {

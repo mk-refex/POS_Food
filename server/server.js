@@ -14,6 +14,7 @@ import cron from "node-cron";
 import app from "./app.js";
 import { initializeDatabase } from "./config/database.js";
 import { runHrmsSync } from "./services/hrmsSync.js";
+import { initSocket } from "./socket.js";
 
 const port = Number(process.env.PORT) || 3000;
 
@@ -85,6 +86,7 @@ async function start() {
   console.log("Cron: HRMS sync scheduled daily at 10:00 PM");
 
   const server = http.createServer(app);
+  initSocket(server);
   server.listen(port, () => {
     // eslint-disable-next-line no-console
     console.log(`API server listening on http://localhost:${port}`);
