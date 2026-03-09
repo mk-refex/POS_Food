@@ -349,11 +349,16 @@ export default function Login() {
           >
             Need help? Contact Refex IT support.
           </Typography>
-          {/* <Box textAlign="center" mt={1}>
-            <Link href="/employee/login" variant="body2">
-              Employee portal — view your transactions
-            </Link>
-          </Box> */}
+          <Box textAlign="center" mt={2}>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => navigate("/employee/login")}
+              sx={{ textTransform: "none" }}
+            >
+              Employee portal — Sign in here
+            </Button>
+          </Box>
         </Box>
       </Box>
     </Box>

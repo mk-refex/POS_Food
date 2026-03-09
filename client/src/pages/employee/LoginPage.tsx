@@ -350,12 +350,22 @@ export default function EmployeeLoginPage() {
             </Button>
           </Box>
 
+          <Box textAlign="center" sx={{ mt: 2 }}>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => navigate("/login")}
+              sx={{ textTransform: "none" }}
+            >
+              Admin portal — Sign in here
+            </Button>
+          </Box>
           <Typography
             variant="caption"
             color="text.secondary"
             display="block"
             textAlign="center"
-            sx={{ mt: 3 }}
+            sx={{ mt: 2 }}
           >
             Powered by Refex AI Team © {new Date().getFullYear()}
           </Typography>
