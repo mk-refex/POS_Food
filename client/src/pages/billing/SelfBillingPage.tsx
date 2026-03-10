@@ -20,7 +20,8 @@ function extractEmployeeIdFromUrl(url: string) {
 /** Parse vCard text (e.g. from QR) and return the first EMAIL value, or null. Uses INTERNET:...TEL to isolate the email value. */
 function extractEmailFromVCard(text: string): string | null {
   const trimmed = text.trim();
-  if (!trimmed.includes("BEGIN:VCARD") || !trimmed.includes("END:VCARD")) return null;
+  if (!trimmed.includes("BEGIN:VCARD") || !trimmed.includes("END:VCARD"))
+    return null;
   const lower = trimmed.toLowerCase();
   const internetIdx = lower.indexOf("internet:");
   const telIdx = lower.indexOf("tel;");
@@ -105,7 +106,11 @@ export default function SelfBillingPage() {
     // Guest QR from employee-created guest (GUEST:id)
     const isGuest = val.toUpperCase().startsWith("GUEST:");
     const isUrl = !isGuest && (val.includes("http") || val.includes("/vcard/"));
-    const isVCard = !isGuest && val.includes("BEGIN:VCARD") && val.includes("INTERNET:") && val.includes("END:VCARD");
+    const isVCard =
+      !isGuest &&
+      val.includes("BEGIN:VCARD") &&
+      val.includes("INTERNET:") &&
+      val.includes("END:VCARD");
     let identifier: string | null = null;
     if (isGuest) {
       identifier = val;
@@ -126,7 +131,9 @@ export default function SelfBillingPage() {
       identifier = identifier.toLowerCase();
     } else {
       setResolvingScan(false);
-      setErrorWithAutoClear("Invalid QR code. Please scan a valid employee or guest QR (Refex vcard URL, vCard with email, or guest QR).");
+      setErrorWithAutoClear(
+        "Invalid QR code. Please scan a valid employee or guest QR (Refex vcard URL, vCard with email, or guest QR).",
+      );
       return;
     }
 
@@ -135,7 +142,11 @@ export default function SelfBillingPage() {
       const res = await employeeAuthApi.selfBillPreview(identifier);
       setPreview(res);
       setResolvingScan(false);
-      if (res && ((res.warnings && Object.keys(res.warnings).length > 0) || res.warnings?.priorException)) {
+      if (
+        res &&
+        ((res.warnings && Object.keys(res.warnings).length > 0) ||
+          res.warnings?.priorException)
+      ) {
         setModalOpen(true);
       } else {
         setModalOpen(false);
@@ -492,9 +503,13 @@ export default function SelfBillingPage() {
               <p className="text-sm text-gray-700 mb-4">
                 It appears this meal may have already been billed for today.
                 {preview?.warnings?.priorException ? (
-                  <> A prior billing exists with an exception flag for this meal.</>
+                  <>
+                    {" "}
+                    A prior billing exists with an exception flag for this meal.
+                  </>
                 ) : null}
-                Do you want to proceed? If this wasn't you, please contact your administrator.
+                Do you want to proceed? If this wasn't you, please contact your
+                administrator.
               </p>
               <div className="flex justify-end gap-3">
                 <button
