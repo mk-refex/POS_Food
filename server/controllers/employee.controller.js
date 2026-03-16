@@ -141,7 +141,7 @@ export async function getMenusForEmployee(req, res) {
   return res.json(menus);
 }
 
-/** Submit feedback (employee only). Allowed only for past dates or today after 2pm, and only when menu is published. */
+/** Submit feedback (employee only). Consumption validation only (no time-of-day restriction). */
 export async function submitFeedback(req, res) {
   const { employeeId } = req.employee;
   const { date, mealType, rating, comments, transactionId, items } = req.body;
@@ -156,14 +156,7 @@ export async function submitFeedback(req, res) {
   const d = String(now.getDate()).padStart(2, '0');
   const todayStr = `${y}-${m}-${d}`;
   if (date > todayStr) {
-    return res.status(400).json({ message: 'Cannot give feedback for future dates. Only past menus or today after 2:00 PM.' });
-  }
-  if (date === todayStr) {
-    const hour = now.getHours();
-    const minute = now.getMinutes();
-    if (hour < 14 || (hour === 14 && minute < 0)) {
-      return res.status(400).json({ message: 'Feedback for today is allowed only after 2:00 PM.' });
-    }
+    return res.status(400).json({ message: 'Cannot give feedback for future dates.' });
   }
 
   const menu = await Menu.findOne({ where: { date, mealType: meal } });
@@ -200,34 +193,28 @@ export async function submitFeedback(req, res) {
   };
 
   if (Array.isArray(items) && items.length > 0) {
-    // validate items against menu and rating values
+    // validate items against menu; rating is optional (0 allowed)
     const menuNames = (menu.items || []).map((it) => String(it.name).trim().toLowerCase());
     const validatedItems = [];
     for (const it of items) {
       const name = String(it.name || '').trim();
-      const rr = Number(it.rating || 0);
+      const rr = Math.min(5, Math.max(0, Number(it.rating || 0)));
       const comm = it.comments ? String(it.comments).trim() : null;
-      if (!name || rr < 1 || rr > 5) {
-        return res.status(400).json({ message: 'Each item must have a valid name and rating 1–5' });
+      if (!name) {
+        return res.status(400).json({ message: 'Each item must have a valid name' });
       }
       if (!menuNames.includes(name.toLowerCase())) {
         return res.status(400).json({ message: `Menu item "${name}" is not present for this meal/date` });
       }
       validatedItems.push({ name, rating: rr, comments: comm });
     }
-    // compute average rating for compatibility
-    const avg = Math.round(validatedItems.reduce((s, it) => s + it.rating, 0) / validatedItems.length);
+    const sum = validatedItems.reduce((s, it) => s + it.rating, 0);
+    const avg = validatedItems.length ? Math.round(sum / validatedItems.length) : 0;
     savePayload.items = validatedItems;
     savePayload.rating = avg;
   } else {
-    // legacy single-rating flow
-    if (rating == null) {
-      return res.status(400).json({ message: 'rating is required' });
-    }
-    const r = Number(rating);
-    if (r < 1 || r > 5) {
-      return res.status(400).json({ message: 'rating must be 1–5' });
-    }
+    // single-rating flow; rating optional (0 if missing or out of range)
+    const r = rating != null && rating !== '' ? Math.min(5, Math.max(0, Number(rating))) : 0;
     savePayload.rating = r;
   }
 

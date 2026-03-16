@@ -79,6 +79,7 @@ export default function EmployeeFeedbackPage() {
   const [list, setList] = useState<FeedbackRecord[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [feedbackPage, setFeedbackPage] = useState(1);
+  const [hideRatingAfterSubmit, setHideRatingAfterSubmit] = useState(false);
 
   const formDate = selectedDate || todayStr;
 
@@ -273,6 +274,7 @@ export default function EmployeeFeedbackPage() {
   const handleDateSelect = (date: string) => {
     setSelectedDate(date);
     setSearchParams({ date });
+    setHideRatingAfterSubmit(false);
   };
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -289,20 +291,6 @@ export default function EmployeeFeedbackPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // If itemized feedback present, validate each item; otherwise validate global rating
-    if (itemFeedbacks && itemFeedbacks.length > 0) {
-      for (const it of itemFeedbacks) {
-        if (!it.name || it.rating < 1 || it.rating > 5) {
-          setError("Please rate each menu item from 1 to 5.");
-          return;
-        }
-      }
-    } else {
-      if (rating < 1 || rating > 5) {
-        setError("Please select a rating from 1 to 5.");
-        return;
-      }
-    }
     setSubmitting(true);
     setError("");
     setSuccess("");
@@ -312,9 +300,9 @@ export default function EmployeeFeedbackPage() {
         mealType,
       };
       if (itemFeedbacks && itemFeedbacks.length > 0) {
-        payload.items = itemFeedbacks;
+        payload.items = itemFeedbacks.map((it) => ({ name: it.name, rating: it.rating || 0 }));
       } else {
-        payload.rating = rating;
+        payload.rating = rating || 0;
       }
       await apiFetchEmployee("/employee/feedback", {
         method: "POST",
@@ -323,6 +311,7 @@ export default function EmployeeFeedbackPage() {
       setSuccess("Thank you! Your feedback has been submitted.");
       setRating(0);
       setItemFeedbacks([]);
+      setHideRatingAfterSubmit(true);
       await loadMyFeedback();
     } catch (err: any) {
       setError(err.message || "Failed to submit feedback");
@@ -337,7 +326,7 @@ export default function EmployeeFeedbackPage() {
         <div className="shrink-0 mb-4">
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Feedback & Review</h1>
           <p className="text-gray-600 mt-1">
-            Select a date to view the menu, then rate a meal (1–5).
+            Select a date and a meal you consumed (billed). Optional rating (1–5); you can submit with or without a rating.
           </p>
         </div>
 
@@ -564,10 +553,10 @@ export default function EmployeeFeedbackPage() {
             <div className="px-6 py-4 border-b border-gray-200">
               <h2 className="text-lg font-semibold text-gray-900">Submit feedback</h2>
               <p className="text-sm text-gray-600 mt-0.5">
-                Rate a meal for <strong>{formDate}</strong> (1–5).
+                Optional rating for <strong>{formDate}</strong> (1–5). You can submit with or without a rating.
                 {!canSubmitFeedback && (
                   <span className="block mt-1 text-amber-600 text-xs">
-                    Only for past menus or today after 2:00 PM, with a published menu, and only for meals you consumed (billed in canteen).
+                    Only for dates with a published menu and only for meals you consumed (billed in canteen).
                   </span>
                 )}
               </p>
@@ -587,7 +576,10 @@ export default function EmployeeFeedbackPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Meal</label>
                   <select
                     value={mealType}
-                    onChange={(e) => setMealType(e.target.value as "breakfast" | "lunch")}
+                    onChange={(e) => {
+                      setMealType(e.target.value as "breakfast" | "lunch");
+                      setHideRatingAfterSubmit(false);
+                    }}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
                   >
                     {hasConsumedBreakfast ? (
@@ -607,69 +599,75 @@ export default function EmployeeFeedbackPage() {
                   </select>
                 </div>
               </div>
-              {itemFeedbacks && itemFeedbacks.length > 0 ? (
-                <div className="space-y-4">
-                  <div className="text-sm font-medium text-gray-700">Rate each menu item (1–5)</div>
-                  <div className="space-y-3">
-                    {itemFeedbacks.map((it, idx) => (
-                      <div key={idx} className="border border-gray-100 rounded-lg p-3 flex items-center justify-between">
-                        <div className="font-medium text-gray-800">{it.name}</div>
-                        <div className="flex items-center gap-2">
-                          {[1, 2, 3, 4, 5].map((r) => (
-                            <button
-                              key={r}
-                              type="button"
-                              onClick={() =>
-                                setItemFeedbacks((prev) => {
-                                  const copy = [...prev];
-                                  copy[idx] = { ...copy[idx], rating: r };
-                                  return copy;
-                                })
-                              }
-                              className={`w-8 h-8 rounded-md text-sm font-medium transition-colors ${
-                                it.rating === r ? "bg-amber-500 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                              }`}
-                            >
-                              {r}
-                            </button>
-                          ))}
-                        </div>
+              {canSubmitFeedback && (
+                <>
+                  {!hideRatingAfterSubmit && itemFeedbacks && itemFeedbacks.length > 0 ? (
+                    <div className="space-y-4">
+                      <div className="text-sm font-medium text-gray-700">Rate each menu item (1–5, optional — click again to unselect)</div>
+                      <div className="space-y-3">
+                        {itemFeedbacks.map((it, idx) => (
+                          <div key={idx} className="border border-gray-100 rounded-lg p-3 flex items-center justify-between">
+                            <div className="font-medium text-gray-800">{it.name}</div>
+                            <div className="flex items-center gap-2">
+                              {[1, 2, 3, 4, 5].map((r) => (
+                                <button
+                                  key={r}
+                                  type="button"
+                                  onClick={() =>
+                                    setItemFeedbacks((prev) => {
+                                      const copy = [...prev];
+                                      const nextRating = it.rating === r ? 0 : r;
+                                      copy[idx] = { ...copy[idx], rating: nextRating };
+                                      return copy;
+                                    })
+                                  }
+                                  className={`w-8 h-8 rounded-md text-sm font-medium transition-colors ${
+                                    it.rating === r ? "bg-amber-500 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                                  }`}
+                                >
+                                  {r}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Rating (1–5)</label>
-                  <div className="flex gap-2">
-                    {[1, 2, 3, 4, 5].map((r) => (
-                      <button
-                        key={r}
-                        type="button"
-                        onClick={() => setRating(r)}
-                        className={`w-10 h-10 rounded-lg font-medium transition-colors ${
-                          rating === r ? "bg-amber-500 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                        }`}
-                      >
-                        {r}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                    </div>
+                  ) : !hideRatingAfterSubmit ? (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Rating (1–5, optional — click again to unselect)</label>
+                      <div className="flex gap-2">
+                        {[1, 2, 3, 4, 5].map((r) => (
+                          <button
+                            key={r}
+                            type="button"
+                            onClick={() => setRating(rating === r ? 0 : r)}
+                            className={`w-10 h-10 rounded-lg font-medium transition-colors ${
+                              rating === r ? "bg-amber-500 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                            }`}
+                          >
+                            {r}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  <button
+                    type="submit"
+                    disabled={submitting || !canSubmitFeedback}
+                    className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {submitting ? "Submitting…" : "Submit feedback"}
+                  </button>
+                </>
               )}
-              <button
-                type="submit"
-                disabled={
-                  submitting ||
-                  !canSubmitFeedback ||
-                  (itemFeedbacks && itemFeedbacks.length > 0
-                    ? itemFeedbacks.some((it) => !it.rating || it.rating < 1 || it.rating > 5)
-                    : rating < 1)
-                }
-                className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {submitting ? "Submitting…" : "Submit feedback"}
-              </button>
+              {!canSubmitFeedback && (
+                <p className="text-sm text-gray-500 italic">
+                  {alreadyGivenForThisMeal
+                    ? "Feedback already submitted for this meal. Select another meal or date to give more feedback."
+                    : "You can only give feedback for meals you consumed (billed). Select a meal you had on this date."}
+                </p>
+              )}
             </form>
           </div>
 
