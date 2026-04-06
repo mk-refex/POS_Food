@@ -41,7 +41,7 @@ export default function SelfBillingPage() {
   const lockedRef = useRef<boolean>(false);
   const [preview, setPreview] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [countdown, setCountdown] = useState<number>(5);
+  const [countdown, setCountdown] = useState<number>(2);
   const [processing, setProcessing] = useState(false);
   const [modalOpen, setModalOpen] = useState<boolean>(false);
   const timerRef = useRef<any>(null);
@@ -76,7 +76,7 @@ export default function SelfBillingPage() {
 
   useEffect(() => {
     if (preview && !modalOpen) {
-      setCountdown(5);
+      setCountdown(2);
       timerRef.current = setInterval(() => {
         setCountdown((c) => {
           if (c <= 1) {
@@ -200,7 +200,7 @@ export default function SelfBillingPage() {
   const handleCancel = () => {
     clearInterval(timerRef.current);
     setPreview(null);
-    setCountdown(5);
+    setCountdown(2);
     inputRef.current?.focus();
     setModalOpen(false);
     lockedRef.current = false;
