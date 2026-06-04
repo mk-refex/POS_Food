@@ -8,6 +8,7 @@ import adminRouter from './admin.routes.js';
 import mastersRouter from './masters.routes.js';
 import employeeAuthRouter from './employeeAuth.routes.js';
 import employeeRouter from './employee.routes.js';
+import publicFeedbackRouter from './publicFeedback.routes.js';
 
 const router = Router();
 
@@ -20,5 +21,6 @@ router.use('/dashboard', dashboardRouter);
 router.use('/transactions', transactionsRouter);
 router.use('/admin', adminRouter);
 router.use('/masters', mastersRouter);
+router.use('/public/feedback', publicFeedbackRouter);
 
 export default router;

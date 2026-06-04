@@ -54,12 +54,13 @@ export async function listFeedbackReports(req, res) {
       );
     }
 
+    const isAdminUser = req.user?.role === 'admin';
     const list = feedbacks.map((f) => {
       const emp = employeesById[f.employeeId] || {};
       return {
         id: f.id,
-        employeeId: f.employeeId,
-        employeeName: emp.employeeName || null,
+        employeeId: isAdminUser ? f.employeeId : null,
+        employeeName: isAdminUser ? (emp.employeeName || null) : 'Anonymous',
         companyName: emp.companyName || null,
         date: f.date,
         mealType: f.mealType,

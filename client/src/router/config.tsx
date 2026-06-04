@@ -18,6 +18,7 @@ import EmployeeFeedbackPage from "../pages/employee/FeedbackPage";
 import EmployeeProfilePage from "../pages/employee/ProfilePage";
 import EmployeeGuestsPage from "../pages/employee/GuestsPage";
 import EmployeeProtectedRoute from "../components/EmployeeProtectedRoute";
+import MenuFeedbackPage from "../pages/public/MenuFeedbackPage";
 
 const routes: RouteObject[] = [
   {
@@ -31,6 +32,10 @@ const routes: RouteObject[] = [
   {
     path: "/employee/login",
     element: <EmployeeLoginPage />,
+  },
+  {
+    path: "/menu-feedback",
+    element: <MenuFeedbackPage />,
   },
   {
     path: "/employee/callback",

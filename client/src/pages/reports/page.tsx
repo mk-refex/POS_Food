@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Fragment } from "react";
 import Layout from "../../components/feature/Layout";
 import { apiFetch, mastersApi, isAdmin } from "../../api/client";
 import { ratingTextClass, ratingBadgeText } from "../../utils/ratingColor";
@@ -59,12 +59,14 @@ interface PriceMaster {
 
 interface FeedbackReportRecord {
   id: number;
-  employeeId: string;
+  employeeId: string | null;
   employeeName?: string | null;
   companyName?: string | null;
   date: string;
   mealType: "breakfast" | "lunch";
   rating: number;
+  comments?: string | null;
+  items?: Array<{ name: string; rating: number }> | null;
   createdAt?: string | Date | null;
 }
 
@@ -76,6 +78,7 @@ interface FeedbackSummary {
     lunch: { count: number; avgRating: number | null };
   };
   byRating: { [rating: string]: number };
+  itemStats?: Record<string, { count: number; avgRating: number | null }>;
 }
 
 export default function Reports() {
@@ -121,9 +124,11 @@ export default function Reports() {
   const [feedbackSummary, setFeedbackSummary] = useState<FeedbackSummary | null>(null);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [feedbackPage, setFeedbackPage] = useState(1);
-  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
-  const [feedbackModalItem, setFeedbackModalItem] = useState<FeedbackReportRecord | null>(null);
+  const [expandedFeedbackId, setExpandedFeedbackId] = useState<number | null>(null);
+  const [itemStatsPage, setItemStatsPage] = useState(1);
   const FEEDBACK_PAGE_SIZE = 10;
+  const ITEM_STATS_PAGE_SIZE = 8;
+  const feedbackEmployeeVisible = isAdmin();
 
   const feedbackTotalPages = useMemo(
     () => Math.max(1, Math.ceil(feedbackRecords.length / FEEDBACK_PAGE_SIZE)),
@@ -133,6 +138,33 @@ export default function Reports() {
     const start = (feedbackPage - 1) * FEEDBACK_PAGE_SIZE;
     return feedbackRecords.slice(start, start + FEEDBACK_PAGE_SIZE);
   }, [feedbackRecords, feedbackPage]);
+
+  const itemStatsEntries = useMemo(() => {
+    if (!feedbackSummary?.itemStats) return [];
+    return Object.entries(feedbackSummary.itemStats).sort(([a], [b]) =>
+      a.localeCompare(b),
+    );
+  }, [feedbackSummary]);
+
+  const itemStatsTotalPages = useMemo(
+    () => Math.max(1, Math.ceil(itemStatsEntries.length / ITEM_STATS_PAGE_SIZE)),
+    [itemStatsEntries.length],
+  );
+
+  const paginatedItemStats = useMemo(() => {
+    const start = (itemStatsPage - 1) * ITEM_STATS_PAGE_SIZE;
+    return itemStatsEntries.slice(start, start + ITEM_STATS_PAGE_SIZE);
+  }, [itemStatsEntries, itemStatsPage]);
+
+  useEffect(() => {
+    setItemStatsPage(1);
+  }, [feedbackSummary]);
+
+  useEffect(() => {
+    setExpandedFeedbackId(null);
+  }, [feedbackPage]);
+
+  const feedbackTableColSpan = (feedbackEmployeeVisible ? 5 : 4) + 1;
 
   // Load data on component mount
   useEffect(() => {
@@ -1189,14 +1221,9 @@ export default function Reports() {
       fileName = "support-staff-report";
     } else if (activeTab === "feedback") {
       dataToExport = feedbackRecords;
-      headers = [
-        "Date",
-        "Meal Type",
-        "Employee ID",
-        "Employee Name",
-        "Company",
-        "Rating",
-      ];
+      headers = feedbackEmployeeVisible
+        ? ["Date", "Meal Type", "Employee ID", "Employee Name", "Company", "Rating"]
+        : ["Date", "Meal Type", "Company", "Rating"];
       fileName = "feedback-report";
     } else {
       dataToExport = companyReportData;
@@ -1254,14 +1281,23 @@ export default function Reports() {
     } else if (activeTab === "feedback") {
       excelData = [
         headers,
-        ...feedbackRecords.map((record) => [
-          record.date,
-          record.mealType.charAt(0).toUpperCase() + record.mealType.slice(1),
-          record.employeeId,
-          record.employeeName || "Unknown",
-          record.companyName || "—",
-          record.rating,
-        ]),
+        ...feedbackRecords.map((record) =>
+          feedbackEmployeeVisible
+            ? [
+                record.date,
+                record.mealType.charAt(0).toUpperCase() + record.mealType.slice(1),
+                record.employeeId ?? "—",
+                record.employeeName || "Anonymous",
+                record.companyName || "—",
+                record.rating,
+              ]
+            : [
+                record.date,
+                record.mealType.charAt(0).toUpperCase() + record.mealType.slice(1),
+                record.companyName || "—",
+                record.rating,
+              ],
+        ),
       ];
     } else {
       excelData = [
@@ -2142,230 +2178,285 @@ export default function Reports() {
             </div>
 
             <div className="p-4 space-y-6">
-              {/* Feedback list */}
-              <div className="overflow-x-auto">
-                {feedbackLoading ? (
-                  <div className="py-12 text-center text-gray-500">
-                    <i className="ri-loader-4-line text-2xl animate-spin mb-2"></i>
-                    <p>Loading feedback…</p>
-                  </div>
-                ) : feedbackRecords.length === 0 ? (
-                  <div className="py-12 text-center text-gray-500">
-                    <i className="ri-emotion-unhappy-line text-3xl mb-2"></i>
-                    <p>No feedback found for the selected range.</p>
-                  </div>
-                ) : (
-                  <>
-                    <table className="w-full min-w-[640px]">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Date
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Meal
-                          </th>
+              {feedbackLoading ? (
+                <div className="py-12 text-center text-gray-500">
+                  <i className="ri-loader-4-line text-2xl animate-spin mb-2"></i>
+                  <p>Loading feedback…</p>
+                </div>
+              ) : feedbackRecords.length === 0 ? (
+                <div className="py-12 text-center text-gray-500">
+                  <i className="ri-emotion-unhappy-line text-3xl mb-2"></i>
+                  <p>No feedback found for the selected range.</p>
+                </div>
+              ) : (
+                <>
+              {/* All feedback — first */}
+              <div>
+                <h3 className="text-sm font-semibold text-gray-800 mb-3">All feedback</h3>
+                <p className="text-xs text-gray-500 mb-2">Click a row to expand review details.</p>
+                <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                  <table className="w-full min-w-[520px]">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="w-10 px-2 py-3" aria-label="Expand" />
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Date
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Meal
+                        </th>
+                        {feedbackEmployeeVisible && (
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             Employee
                           </th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Company
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Rating
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="bg-white divide-y divide-gray-200">
-                        {paginatedFeedbackRecords.map((f) => (
-                          <tr key={f.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => { setFeedbackModalItem(f); setFeedbackModalOpen(true); }}>
-                            <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">
-                              {f.date}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap capitalize">
-                              <span
-                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${f.mealType === "breakfast"
-                                  ? "bg-orange-50 text-orange-700 border border-orange-100"
-                                  : "bg-green-50 text-green-700 border border-green-100"
-                                  }`}
-                              >
-                                {f.mealType === "breakfast" ? (
-                                  <i className="ri-restaurant-line mr-1"></i>
-                                ) : (
-                                  <i className="ri-bowl-line mr-1"></i>
-                                )}
-                                {f.mealType}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">
-                              <div className="flex flex-col">
-                                <span>{f.employeeName || "Unknown"}</span>
-                                <span className="text-xs text-gray-500">
-                                  {f.employeeId}
+                        )}
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Company
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Rating
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {paginatedFeedbackRecords.map((f) => {
+                        const isExpanded = expandedFeedbackId === f.id;
+                        return (
+                          <Fragment key={f.id}>
+                            <tr
+                              className={`cursor-pointer transition-colors ${isExpanded ? "bg-amber-50/60" : "hover:bg-gray-50"}`}
+                              onClick={() =>
+                                setExpandedFeedbackId(isExpanded ? null : f.id)
+                              }
+                            >
+                              <td className="px-2 py-3 text-center text-gray-500">
+                                <i
+                                  className={`ri-arrow-down-s-line text-lg transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                                  aria-hidden
+                                />
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">
+                                {f.date}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap capitalize">
+                                <span
+                                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${f.mealType === "breakfast"
+                                    ? "bg-orange-50 text-orange-700 border border-orange-100"
+                                    : "bg-green-50 text-green-700 border border-green-100"
+                                    }`}
+                                >
+                                  {f.mealType === "breakfast" ? (
+                                    <i className="ri-restaurant-line mr-1"></i>
+                                  ) : (
+                                    <i className="ri-bowl-line mr-1"></i>
+                                  )}
+                                  {f.mealType}
                                 </span>
-                              </div>
-                            </td>
-                            <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
-                              {f.companyName || "—"}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">
-                              <span className="inline-flex items-center gap-1">
-                                <span className="font-semibold">{f.rating}</span>
-                                <i className="ri-star-fill text-amber-400 text-xs"></i>
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {/* Feedback detail modal */}
-                    {feedbackModalOpen && feedbackModalItem && (
-                      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                        <div className="absolute inset-0 bg-black/50" onClick={() => setFeedbackModalOpen(false)}></div>
-                        <div className="relative bg-white rounded-lg shadow-xl max-w-3xl w-full z-10 overflow-auto">
-                          <div className="p-4 border-b flex items-center justify-between">
-                            <div>
-                              <h3 className="text-lg font-semibold text-gray-800">Feedback details</h3>
-                              <div className="text-sm text-gray-500">{feedbackModalItem.date} · {feedbackModalItem.mealType}</div>
-                            </div>
-                            <button onClick={() => setFeedbackModalOpen(false)} className="p-2 text-gray-600 hover:bg-gray-100 rounded">
-                              <i className="ri-close-line"></i>
-                            </button>
-                          </div>
-                          <div className="p-4 space-y-3">
-                            <div>
-                              <div className="text-sm text-gray-600">Employee</div>
-                              <div className="text-base font-medium">{feedbackModalItem.employeeName || feedbackModalItem.employeeId}</div>
-                            </div>
-                            <div>
-                              <div className="text-sm text-gray-600">Overall rating</div>
-                              <div className={`text-xl font-semibold ${ratingTextClass(feedbackModalItem.rating)}`}>{feedbackModalItem.rating} / 5</div>
-                            </div>
-                            {feedbackModalItem.items && feedbackModalItem.items.length > 0 && (
-                              <div>
-                                <div className="text-sm text-gray-600 mb-2">Per-item feedback</div>
-                                <ul className="space-y-2">
-                                  {feedbackModalItem.items.map((it: any, idx: number) => (
-                                    <li key={idx} className="border rounded p-2 flex items-center justify-between">
-                                      <div className="font-medium text-gray-800">{it.name}</div>
-                                      <div className={`${ratingBadgeText(it.rating)} font-semibold`}>{it.rating} / 5</div>
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
+                              </td>
+                              {feedbackEmployeeVisible && (
+                                <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">
+                                  <div className="flex flex-col">
+                                    <span>{f.employeeName || "Unknown"}</span>
+                                    <span className="text-xs text-gray-500">{f.employeeId}</span>
+                                  </div>
+                                </td>
+                              )}
+                              <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
+                                {f.companyName || "—"}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">
+                                <span className="inline-flex items-center gap-1">
+                                  <span className="font-semibold">{f.rating}</span>
+                                  <i className="ri-star-fill text-amber-400 text-xs"></i>
+                                </span>
+                              </td>
+                            </tr>
+                            {isExpanded && (
+                              <tr>
+                                <td
+                                  colSpan={feedbackTableColSpan}
+                                  className="px-4 py-4 bg-slate-50 border-t border-slate-100"
+                                >
+                                  <div className="text-sm space-y-3 max-w-2xl">
+                                    {feedbackEmployeeVisible && (
+                                      <div>
+                                        <span className="text-gray-500">Employee · </span>
+                                        <span className="font-medium text-gray-800">
+                                          {f.employeeName || f.employeeId}
+                                        </span>
+                                      </div>
+                                    )}
+                                    <div>
+                                      <span className="text-gray-500">Overall rating · </span>
+                                      <span className={`font-semibold ${ratingTextClass(f.rating)}`}>
+                                        {f.rating} / 5
+                                      </span>
+                                    </div>
+                                    {f.items && f.items.length > 0 ? (
+                                      <div>
+                                        <p className="text-gray-500 mb-2">Per-item ratings</p>
+                                        <ul className="space-y-1.5 border border-gray-200 rounded-lg bg-white divide-y divide-gray-100">
+                                          {f.items.map((it, idx) => (
+                                            <li
+                                              key={idx}
+                                              className="flex items-center justify-between px-3 py-2"
+                                            >
+                                              <span className="font-medium text-gray-800">{it.name}</span>
+                                              <span className={`font-semibold ${ratingBadgeText(it.rating)}`}>
+                                                {it.rating} / 5
+                                              </span>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    ) : (
+                                      <p className="text-gray-500 italic">No per-item ratings for this entry.</p>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
                             )}
-                          </div>
-                        </div>
-                      </div>
-                    )}
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
 
-                    {/* Pagination for feedback list */}
-                    {feedbackRecords.length > FEEDBACK_PAGE_SIZE && (
-                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
-                        <div className="text-gray-600">
-                          Page {feedbackPage} of {feedbackTotalPages} • Showing{" "}
-                          {Math.min((feedbackPage - 1) * FEEDBACK_PAGE_SIZE + 1, feedbackRecords.length)}–
-                          {Math.min(feedbackPage * FEEDBACK_PAGE_SIZE, feedbackRecords.length)} of{" "}
-                          {feedbackRecords.length}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setFeedbackPage((p) => Math.max(1, p - 1))}
-                            disabled={feedbackPage <= 1}
-                            className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            Previous
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setFeedbackPage((p) => Math.min(feedbackTotalPages, p + 1))}
-                            disabled={feedbackPage >= feedbackTotalPages}
-                            className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            Next
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </>
+                {feedbackRecords.length > FEEDBACK_PAGE_SIZE && (
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
+                    <div className="text-gray-600">
+                      Page {feedbackPage} of {feedbackTotalPages} • Showing{" "}
+                      {Math.min((feedbackPage - 1) * FEEDBACK_PAGE_SIZE + 1, feedbackRecords.length)}–
+                      {Math.min(feedbackPage * FEEDBACK_PAGE_SIZE, feedbackRecords.length)} of{" "}
+                      {feedbackRecords.length}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setFeedbackPage((p) => Math.max(1, p - 1))}
+                        disabled={feedbackPage <= 1}
+                        className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFeedbackPage((p) => Math.min(feedbackTotalPages, p + 1))}
+                        disabled={feedbackPage >= feedbackTotalPages}
+                        className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
 
-              {/* Visual summary */}
+              {/* Summary cards + item-wise — after table */}
               {feedbackSummary && feedbackSummary.total > 0 && (
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                  {/* Summary cards */}
-                  <div className="space-y-4 lg:col-span-1">
-                    <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 flex items-center justify-between">
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 flex items-center justify-between min-h-[88px]">
                       <div>
                         <p className="text-xs font-medium text-amber-700 mb-1">Overall average</p>
                         <p className="text-2xl font-bold text-amber-700">
                           {feedbackSummary.avgRating != null ? feedbackSummary.avgRating.toFixed(2) : "N/A"}
                         </p>
                       </div>
-                      <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
+                      <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
                         <i className="ri-star-smile-line text-xl text-amber-600"></i>
                       </div>
                     </div>
-                    <div className="bg-orange-50 border border-orange-100 rounded-xl p-4 flex items-center justify-between">
+                    <div className="bg-orange-50 border border-orange-100 rounded-xl p-4 flex items-center justify-between min-h-[88px]">
                       <div>
                         <p className="text-xs font-medium text-orange-700 mb-1">Breakfast</p>
-                        <p className="text-lg font-semibold text-orange-700">
+                        <p className="text-xl font-bold text-orange-700">
                           {feedbackSummary.byMeal.breakfast.count > 0
                             ? (feedbackSummary.byMeal.breakfast.avgRating?.toFixed(2) ?? "N/A")
-                            : "No feedback"}
+                            : "—"}
                         </p>
                         <p className="text-xs text-orange-700/80 mt-0.5">
                           {feedbackSummary.byMeal.breakfast.count} responses
                         </p>
                       </div>
-                      <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center">
+                      <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
                         <i className="ri-restaurant-line text-xl text-orange-600"></i>
                       </div>
                     </div>
-                    <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 flex items-center justify-between">
+                    <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 flex items-center justify-between min-h-[88px]">
                       <div>
                         <p className="text-xs font-medium text-emerald-700 mb-1">Lunch</p>
-                        <p className="text-lg font-semibold text-emerald-700">
+                        <p className="text-xl font-bold text-emerald-700">
                           {feedbackSummary.byMeal.lunch.count > 0
                             ? (feedbackSummary.byMeal.lunch.avgRating?.toFixed(2) ?? "N/A")
-                            : "No feedback"}
+                            : "—"}
                         </p>
                         <p className="text-xs text-emerald-700/80 mt-0.5">
                           {feedbackSummary.byMeal.lunch.count} responses
                         </p>
                       </div>
-                      <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
+                      <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
                         <i className="ri-bowl-line text-xl text-emerald-600"></i>
                       </div>
                     </div>
                   </div>
-                  {/* Per-item averages */}
-                  <div className="bg-white rounded-xl border border-gray-200 p-4 lg:col-span-2">
-                    <h3 className="text-sm font-semibold text-gray-800 mb-2">Item-wise averages</h3>
-                    {feedbackSummary?.itemStats && Object.keys(feedbackSummary.itemStats).length > 0 ? (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {Object.entries(feedbackSummary.itemStats).map(([name, stat]: any) => (
-                          <div key={name} className="p-3 border rounded-lg flex items-center justify-between">
-                            <div>
-                              <div className="font-medium text-gray-800">{name}</div>
-                              <div className="text-xs text-gray-500">{stat.count} reviews</div>
-                            </div>
-                            <div className="text-right">
-                              <div className="text-lg font-semibold text-amber-700">{stat.avgRating != null ? stat.avgRating.toFixed(2) : 'N/A'}</div>
-                              <div className="text-xs text-gray-500">avg rating</div>
-                            </div>
-                          </div>
+
+                  <div className="bg-white rounded-xl border border-gray-200 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                      <h3 className="text-sm font-semibold text-gray-800">Item-wise averages</h3>
+                      {itemStatsEntries.length > ITEM_STATS_PAGE_SIZE && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <span className="text-gray-600">
+                            Page {itemStatsPage} of {itemStatsTotalPages}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setItemStatsPage((p) => Math.max(1, p - 1))}
+                            disabled={itemStatsPage <= 1}
+                            className="px-2.5 py-1 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 text-xs"
+                          >
+                            Prev
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setItemStatsPage((p) => Math.min(itemStatsTotalPages, p + 1))}
+                            disabled={itemStatsPage >= itemStatsTotalPages}
+                            className="px-2.5 py-1 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 text-xs"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    {itemStatsEntries.length > 0 ? (
+                      <ul className="divide-y divide-gray-100 border border-gray-100 rounded-lg overflow-hidden">
+                        {paginatedItemStats.map(([name, stat]) => (
+                          <li
+                            key={name}
+                            className="flex items-center justify-between gap-4 px-4 py-2.5 bg-white hover:bg-gray-50 text-sm"
+                          >
+                            <span className="font-medium text-gray-800 truncate">{name}</span>
+                            <span className="shrink-0 text-gray-600">
+                              <span className="font-semibold text-amber-700">
+                                {stat.avgRating != null ? stat.avgRating.toFixed(2) : "N/A"}
+                              </span>
+                              <span className="text-gray-400 mx-1">·</span>
+                              {stat.count} reviews
+                            </span>
+                          </li>
                         ))}
-                      </div>
+                      </ul>
                     ) : (
                       <p className="text-sm text-gray-500">No itemized feedback available.</p>
                     )}
                   </div>
+                </div>
+              )}
 
-                  {/* Rating distribution bars */}
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 lg:col-span-3">
+              {/* Rating distribution */}
+              {feedbackSummary && feedbackSummary.total > 0 && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
                     <h3 className="text-sm font-semibold text-slate-800 mb-2">
                       Rating distribution
                     </h3>
@@ -2413,7 +2504,8 @@ export default function Reports() {
                       );
                     })()}
                   </div>
-                </div>
+              )}
+                </>
               )}
             </div>
           </div>

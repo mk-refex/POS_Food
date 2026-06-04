@@ -13,12 +13,6 @@ export function initSocket(httpServer) {
     cors: { origin: true, credentials: true },
     path: '/socket.io',
   });
-  io.on('connection', (socket) => {
-    console.log('[Socket] client connected:', socket.id);
-    socket.on('disconnect', () => {
-      console.log('[Socket] client disconnected:', socket.id);
-    });
-  });
   return io;
 }
 

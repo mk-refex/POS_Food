@@ -19,7 +19,7 @@ export async function initializeDatabase() {
     const { applyAssociations, SsoConfig, SmtpConfig, Feedback, Guest } = await import("../models/index.js");
     applyAssociations();
     // Avoid MySQL "Too many keys specified" by not using alter on all tables
-    await sequelize.sync({alter: true});
+    await sequelize.sync({alter: false});
     // Ensure sso_config has all columns (e.g. redirect_uri) if model was updated
     try {
       await SsoConfig.sync({ alter: false });
@@ -27,17 +27,17 @@ export async function initializeDatabase() {
       console.warn("SsoConfig.sync(alter) skipped:", e?.message || e);
     }
     try {
-      await SmtpConfig.sync({ alter: true });
+      await SmtpConfig.sync({ alter: false });
     } catch (e) {
       console.warn("SmtpConfig.sync(alter) skipped:", e?.message || e);
     }
     try {
-      await Feedback.sync({ alter: true });
+      await Feedback.sync({ alter: false });
     } catch (e) {
       console.warn("Feedback.sync(alter) skipped:", e?.message || e);
     }
     try {
-      await Guest.sync({ alter: true });
+      await Guest.sync({ alter: false });
     } catch (e) {
       console.warn("Guest.sync(alter) skipped:", e?.message || e);
     }

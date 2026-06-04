@@ -25,12 +25,13 @@ async function start() {
   } catch (error) {
     console.warn(
       "Database connection failed, but server will start anyway:",
-      error.message
+      error.message,
     );
   }
 
   // HRMS sync: wait a bit after startup, then run once (with retries); also runs daily at 10 PM
-  const startupDelayMs = Number(process.env.HRMS_SYNC_STARTUP_DELAY_MS) || 15000; // 15s default
+  const startupDelayMs =
+    Number(process.env.HRMS_SYNC_STARTUP_DELAY_MS) || 15000; // 15s default
   const maxRetries = Number(process.env.HRMS_SYNC_STARTUP_RETRIES) || 3;
   const retryDelayMs = Number(process.env.HRMS_SYNC_RETRY_DELAY_MS) || 10000; // 10s between retries
 
@@ -40,7 +41,9 @@ async function start() {
     let lastError;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        console.log(`[Startup] Running HRMS sync (attempt ${attempt}/${maxRetries})…`);
+        console.log(
+          `[Startup] Running HRMS sync (attempt ${attempt}/${maxRetries})…`,
+        );
         const result = await runHrmsSync();
         if (result.error) {
           lastError = result.error;
@@ -50,23 +53,29 @@ async function start() {
           "[Startup] HRMS sync done: created",
           result.created.employees + result.created.supportStaff,
           "updated",
-          result.updated.employees + result.updated.supportStaff
+          result.updated.employees + result.updated.supportStaff,
         );
         return;
       } catch (err) {
         lastError = err;
-        console.warn(`[Startup] HRMS sync attempt ${attempt} failed:`, err.message);
+        console.warn(
+          `[Startup] HRMS sync attempt ${attempt} failed:`,
+          err.message,
+        );
         if (attempt < maxRetries) {
           console.log(`[Startup] Retrying in ${retryDelayMs / 1000}s…`);
           await new Promise((r) => setTimeout(r, retryDelayMs));
         }
       }
     }
-    console.warn("[Startup] HRMS sync failed after all retries:", lastError?.message);
+    console.warn(
+      "[Startup] HRMS sync failed after all retries:",
+      lastError?.message,
+    );
   })();
 
-  cron.schedule("0 22 * * *", async () => {
-    console.log("[Cron] Running HRMS sync (10 PM daily)…");
+  cron.schedule("0 7,22 * * *", async () => {
+    console.log("[Cron] Running HRMS sync (7AM and 10 PM daily)…");
     try {
       const result = await runHrmsSync();
       if (result.error) {
@@ -76,14 +85,14 @@ async function start() {
           "[Cron] HRMS sync done: created",
           result.created.employees + result.created.supportStaff,
           "updated",
-          result.updated.employees + result.updated.supportStaff
+          result.updated.employees + result.updated.supportStaff,
         );
       }
     } catch (err) {
       console.error("[Cron] HRMS sync failed:", err.message);
     }
   });
-  console.log("Cron: HRMS sync scheduled daily at 10:00 PM");
+  console.log("Cron: HRMS sync scheduled daily at 7:00 AM and 10:00 PM");
 
   const server = http.createServer(app);
   initSocket(server);

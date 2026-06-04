@@ -1,6 +1,7 @@
 import nodemailer from 'nodemailer';
 import { Op } from 'sequelize';
 import { Transaction, SmtpConfig } from '../models/index.js';
+import { getMenuFeedbackUrl } from '../utils/feedbackLinkToken.js';
 
 const LOGO_URL = 'https://refexrenewables.com/img/logo.png';
 
@@ -98,8 +99,9 @@ export async function getMonthlySummaryForCustomer(customerType, customerId, dat
 
 /**
  * Build HTML body for transaction notification email.
+ * @param {string|null} feedbackUrl - encrypted link to public menu feedback form
  */
-function buildNotificationHtml(transaction, customerName, monthlySummary) {
+function buildNotificationHtml(transaction, customerName, monthlySummary, feedbackUrl) {
   const items = transaction.items || [];
   const breakfastQty = items.filter((i) => i.name === 'Breakfast').reduce((s, i) => s + (i.quantity || 0), 0);
   const lunchQty = items.filter((i) => i.name === 'Lunch').reduce((s, i) => s + (i.quantity || 0), 0);
@@ -135,14 +137,59 @@ function buildNotificationHtml(transaction, customerName, monthlySummary) {
       <strong>Amount for this transaction: ₹${Number(transaction.totalAmount || 0).toLocaleString('en-IN')}</strong>
     </p>
     ${monthText ? `<p style="color: #555; margin: 0 0 16px 0; line-height: 1.5; font-size: 14px;">Monthly summary – ${monthText}</p>` : ''}
-    <p style="color: #333; margin: 20px 0 0 0;">
-      <a href="${getEmployeeLoginUrl()}" style="color: #2563eb; font-weight: 600; text-decoration: none;">Sign in to your account</a> for more details (transactions, menu, feedback).
+    ${
+      feedbackUrl
+        ? `
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin: 28px 0 0 0; border-collapse: collapse;">
+      <tr>
+        <td style="padding: 0 0 24px 0; border-top: 1px solid #eeeeee;"></td>
+      </tr>
+      <tr>
+        <td style="padding: 20px 22px; background-color: #f9fafb; border: 1px solid #e8eaed; border-radius: 8px;">
+          <p style="margin: 0 0 14px 0; color: #374151; font-size: 17px; line-height: 1.45; font-weight: 600; text-align: left;">
+            &#127869;&#65039; How was today's meal?
+          </p>
+          <p style="margin: 0 0 12px 0; color: #6b7280; font-size: 14px; line-height: 1.65; text-align: left;">
+            Your feedback is the secret ingredient that helps us make every meal better! &#128523;
+          </p>
+          <p style="margin: 0 0 20px 0; color: #6b7280; font-size: 14px; line-height: 1.65; text-align: left;">
+            It only takes a few seconds to share your thoughts.
+          </p>
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin: 0 0 18px 0;">
+            <tr>
+              <td align="center" style="text-align: center;">
+                <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 0 auto;">
+                  <tr>
+                    <td style="border-radius: 6px; border: 1px solid #d1d5db; background-color: #ffffff;">
+                      <a href="${feedbackUrl}" style="display: inline-block; padding: 11px 22px; color: #374151 !important; font-size: 14px; font-weight: 600; text-decoration: none; line-height: 1.4;">
+                        &#128073; Rate today's menu
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+          <p style="margin: 0; color: #9ca3af; font-size: 12px; line-height: 1.5; text-align: center;">
+            This feedback link is unique to you and valid for this meal date only.
+          </p>
+        </td>
+      </tr>
+    </table>`
+        : ''
+    }
+    <p style="color: #555; margin: 24px 0 0 0; line-height: 1.65; font-size: 14px; text-align: center;">
+      Want to view your transactions, menus, and past feedback? </br>Simply
+      <a href="${getEmployeeLoginUrl()}" style="color: #4b5563; font-weight: 600; text-decoration: underline;">sign in to your F.E.A.S.T account</a>.
     </p>
-    <p style="color: #666; margin: 24px 0 0 0; padding: 12px; background: #f9f9f9; border-radius: 6px; font-size: 13px; line-height: 1.5;">
-      If this transaction was not made by you, please contact your administrator.
+    <p style="color: #6b7280; margin: 20px 0 0 0; padding: 14px 16px; background: #f9fafb; border-radius: 6px; border: 1px solid #eeeeee; font-size: 13px; line-height: 1.55; text-align: center;">
+      Didn't make this transaction? Please reach out to your administrator.
     </p>
-    <p style="color: #999; margin: 20px 0 0 0; font-size: 12px;">
-      This is an automated message from the food billing system.
+    <p style="color: #9ca3af; margin: 24px 0 0 0; font-size: 13px; line-height: 1.55; text-align: center;">
+      Thanks for being part of F.E.A.S.T — we're always cooking up ways to serve you better! &#127860;
+    </p>
+    <p style="color: #b0b5bd; margin: 16px 0 0 0; font-size: 11px; line-height: 1.4; text-align: center;">
+      This is an automated message from the F.E.A.S.T system.
     </p>
   </div>
 </body>
@@ -177,13 +224,31 @@ export async function sendTransactionNotificationEmail(transaction, toEmail, cus
     const from = config.fromEmail || config.user || 'noreply@localhost';
     const fromName = config.fromName || 'Food Billing';
     const loginUrl = getEmployeeLoginUrl();
-    const plain = `Food Billing Confirmation\n\nYou have consumed ${(transaction.items || []).filter(i => i.name === 'Breakfast' || i.name === 'Lunch').map(i => i.name).join(' and ') || 'meal(s)'} on ${transaction.date} at ${transaction.time}. Amount: ₹${Number(transaction.totalAmount || 0).toLocaleString('en-IN')}.\n\nSign in to your account for more details: ${loginUrl}\n\nIf this was not you, please contact your administrator.`;
+    const feedbackUrl =
+      transaction.customerType === 'employee' && transaction.customerId
+        ? getMenuFeedbackUrl(transaction.customerId, transaction.date)
+        : null;
+    const mealNames =
+      (transaction.items || [])
+        .filter((i) => i.name === 'Breakfast' || i.name === 'Lunch')
+        .map((i) => i.name)
+        .join(' and ') || 'meal(s)';
+    const plain = `Food Billing Confirmation\n\nYou have consumed ${mealNames} on ${transaction.date} at ${transaction.time}. Amount: ₹${Number(transaction.totalAmount || 0).toLocaleString('en-IN')}.\n\n${
+      feedbackUrl
+        ? `How was today's meal?\n\nYour feedback is the secret ingredient that helps us make every meal better!\nIt only takes a few seconds to share your thoughts.\n\nRate today's menu: ${feedbackUrl}\n\nThis feedback link is unique to you and valid for this meal date only.\n\n`
+        : ''
+    }Want to view your transactions, menus, and past feedback? Sign in to your F.E.A.S.T account: ${loginUrl}\n\nDidn't make this transaction? Please reach out to your administrator.\n\nThanks for being part of F.E.A.S.T — we're always cooking up ways to serve you better!`;
     await transporter.sendMail({
       from: config.fromName ? `"${fromName}" <${from}>` : from,
       to: toEmail,
       subject: `Food billing confirmation – ${transaction.date}`,
       text: plain,
-      html: buildNotificationHtml(transaction, customerName, monthlySummary || { breakfastCount: 0, lunchCount: 0, totalAmount: 0, monthLabel: '' }),
+      html: buildNotificationHtml(
+        transaction,
+        customerName,
+        monthlySummary || { breakfastCount: 0, lunchCount: 0, totalAmount: 0, monthLabel: '' },
+        feedbackUrl,
+      ),
     });
     console.log(`transactionEmail: notification sent to ${toEmail} for transaction ${transaction.date}`);
   } catch (e) {
