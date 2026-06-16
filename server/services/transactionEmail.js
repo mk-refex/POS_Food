@@ -250,7 +250,7 @@ export async function sendTransactionNotificationEmail(transaction, toEmail, cus
         feedbackUrl,
       ),
     });
-    console.log(`transactionEmail: notification sent to ${toEmail} for transaction ${transaction.date}`);
+    // console.log(`transactionEmail: notification sent to ${toEmail} for transaction ${transaction.date}`);
   } catch (e) {
     console.error('transactionEmail: failed to send', e?.message || e);
   }

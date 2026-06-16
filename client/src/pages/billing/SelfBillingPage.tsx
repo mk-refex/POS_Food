@@ -35,28 +35,53 @@ function extractEmailFromVCard(text: string): string | null {
   return match ? match[0].trim() : null;
 }
 
+type AlertModalState = {
+  title: string;
+  message: string;
+  variant: "warning" | "error" | "limit";
+} | null;
+
 export default function SelfBillingPage() {
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const lockedRef = useRef<boolean>(false);
   const [preview, setPreview] = useState<any | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [alertModal, setAlertModal] = useState<AlertModalState>(null);
   const [countdown, setCountdown] = useState<number>(2);
   const [processing, setProcessing] = useState(false);
-  const [modalOpen, setModalOpen] = useState<boolean>(false);
   const timerRef = useRef<any>(null);
   const scanAutoTimer = useRef<any>(null);
-  const errorClearTimerRef = useRef<any>(null);
+  const alertModalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [resolvingScan, setResolvingScan] = useState(false);
 
   const ERROR_DISPLAY_MS = 5000;
-  const setErrorWithAutoClear = (message: string) => {
-    if (errorClearTimerRef.current) clearTimeout(errorClearTimerRef.current);
-    setError(message);
-    errorClearTimerRef.current = setTimeout(() => {
-      setError(null);
-      errorClearTimerRef.current = null;
-    }, ERROR_DISPLAY_MS);
+  const MEAL_LIMIT_MSG_MS = 3000;
+
+  const showAlertModal = (
+    title: string,
+    message: string,
+    variant: "warning" | "error" | "limit" = "error",
+    durationMs = ERROR_DISPLAY_MS,
+  ) => {
+    if (alertModalTimerRef.current) clearTimeout(alertModalTimerRef.current);
+    setAlertModal({ title, message, variant });
+    alertModalTimerRef.current = setTimeout(() => {
+      setAlertModal(null);
+      alertModalTimerRef.current = null;
+    }, durationMs);
+  };
+
+  const showMealLimitModal = (message: string) => {
+    showAlertModal(
+      "Meal Already Consumed",
+      message,
+      "limit",
+      MEAL_LIMIT_MSG_MS,
+    );
+  };
+  const resetScanInput = () => {
+    if (inputRef.current) inputRef.current.value = "";
+    inputRef.current?.focus();
   };
   const [todayMenu, setTodayMenu] = useState<{
     breakfast?: any[];
@@ -66,6 +91,9 @@ export default function SelfBillingPage() {
 
   useEffect(() => {
     inputRef.current?.focus();
+    return () => {
+      if (alertModalTimerRef.current) clearTimeout(alertModalTimerRef.current);
+    };
   }, []);
 
   // digital clock
@@ -75,13 +103,12 @@ export default function SelfBillingPage() {
   }, []);
 
   useEffect(() => {
-    if (preview && !modalOpen) {
+    if (preview) {
       setCountdown(2);
       timerRef.current = setInterval(() => {
         setCountdown((c) => {
           if (c <= 1) {
             clearInterval(timerRef.current);
-            // auto-confirm only when modal is not open (i.e., no warnings)
             handleConfirm();
             return 0;
           }
@@ -90,17 +117,17 @@ export default function SelfBillingPage() {
       }, 1000);
     }
     return () => clearInterval(timerRef.current);
-  }, [preview, modalOpen]);
+  }, [preview]);
 
   const processScanned = async (v: string) => {
     const val = v.trim();
     if (lockedRef.current) return;
     if (!val) return;
-    if (errorClearTimerRef.current) {
-      clearTimeout(errorClearTimerRef.current);
-      errorClearTimerRef.current = null;
+    if (alertModalTimerRef.current) {
+      clearTimeout(alertModalTimerRef.current);
+      alertModalTimerRef.current = null;
     }
-    setError(null);
+    setAlertModal(null);
     setResolvingScan(true);
 
     // Guest QR from employee-created guest (GUEST:id)
@@ -118,52 +145,71 @@ export default function SelfBillingPage() {
       identifier = extractEmployeeIdFromUrl(val);
       if (!identifier) {
         setResolvingScan(false);
-        setErrorWithAutoClear("Unable to parse employee ID from scanned URL");
+        showAlertModal(
+          "QR Code Not Recognised",
+          "We could not read your employee details from this QR code. Please scan your Refex employee ID card again.",
+          "warning",
+        );
+        resetScanInput();
         return;
       }
     } else if (isVCard) {
       identifier = extractEmailFromVCard(val);
       if (!identifier) {
         setResolvingScan(false);
-        setErrorWithAutoClear("No URL or vCard email found in scan");
+        showAlertModal(
+          "Email Not Found",
+          "This QR code does not contain a valid work email. Please scan your official Refex employee ID card.",
+          "warning",
+        );
+        resetScanInput();
         return;
       }
       identifier = identifier.toLowerCase();
     } else {
       setResolvingScan(false);
-      setErrorWithAutoClear(
-        "Invalid QR code. Please scan a valid employee or guest QR (Refex vcard URL, vCard with email, or guest QR).",
+      showAlertModal(
+        "Invalid QR Code",
+        "This QR code cannot be used for meal billing. Please scan your employee ID card, guest QR, or Refex vCard.",
+        "warning",
       );
+      resetScanInput();
       return;
     }
 
     lockedRef.current = true;
     try {
       const res = await employeeAuthApi.selfBillPreview(identifier);
+      const warnings = res?.warnings || {};
+      if (warnings.breakfastExceeded || warnings.lunchExceeded) {
+        const mealLabel = res?.meal === "breakfast" ? "breakfast" : "lunch";
+        showMealLimitModal(`You have already consumed ${mealLabel} today.`);
+        lockedRef.current = false;
+        setResolvingScan(false);
+        resetScanInput();
+        return;
+      }
       setPreview(res);
       setResolvingScan(false);
-      if (
-        res &&
-        ((res.warnings && Object.keys(res.warnings).length > 0) ||
-          res.warnings?.priorException)
-      ) {
-        setModalOpen(true);
-      } else {
-        setModalOpen(false);
-      }
     } catch (err: any) {
-      setErrorWithAutoClear(err?.message || "Preview failed");
+      showAlertModal(
+        "Unable to Verify",
+        err?.message ||
+          "We could not verify your details right now. Please scan your QR code again.",
+        "error",
+      );
       lockedRef.current = false;
       setResolvingScan(false);
+      resetScanInput();
+      return;
     }
-    if (inputRef.current) inputRef.current.value = "";
-    inputRef.current?.focus();
+    resetScanInput();
   };
 
   const SCAN_COMPLETE_DELAY_MS = 1000;
 
   const handleScanKeyDown = () => {
-    setError(null);
+    setAlertModal(null);
     setResolvingScan(true);
   };
 
@@ -201,15 +247,12 @@ export default function SelfBillingPage() {
     clearInterval(timerRef.current);
     setPreview(null);
     setCountdown(2);
-    inputRef.current?.focus();
-    setModalOpen(false);
     lockedRef.current = false;
+    resetScanInput();
   };
 
-  const handleConfirm = async (forceException: boolean = false) => {
+  const handleConfirm = async () => {
     if (!preview) return;
-    // If modal is open, user must accept explicitly — modalAccept will call this handler
-    if (modalOpen) setModalOpen(false);
     if (processing) return;
     setProcessing(true);
     try {
@@ -218,7 +261,6 @@ export default function SelfBillingPage() {
         employeeId: preview.employee.employeeId,
         quantity: 1,
         userId: currentUser?.id ?? currentUser?.userId ?? undefined,
-        forceException: !!forceException,
       });
       const trx = data.transaction;
       // build receipt html and open print window
@@ -281,13 +323,23 @@ export default function SelfBillingPage() {
         }
       }
       setPreview(null);
-      setError(null);
       lockedRef.current = false;
+      resetScanInput();
     } catch (err: any) {
-      setErrorWithAutoClear(err?.message || "Billing failed");
+      const msg =
+        err?.message ||
+        "Your meal could not be billed. Please try again or contact the cafeteria desk.";
+      const isMealLimit = /already consumed/i.test(msg);
+      if (isMealLimit) {
+        showMealLimitModal(msg);
+      } else {
+        showAlertModal("Billing Failed", msg, "error");
+      }
+      setPreview(null);
+      lockedRef.current = false;
+      resetScanInput();
     } finally {
       setProcessing(false);
-      inputRef.current?.focus();
     }
   };
 
@@ -423,21 +475,11 @@ export default function SelfBillingPage() {
                   className="opacity-0 absolute left-0 top-0"
                   aria-label="Scan QR code"
                 />
-                {error && <div className="text-red-600 mt-4">{error}</div>}
               </div>
             </div>
 
             <div className="bg-white rounded-lg shadow p-6">
-              {resolvingScan ? (
-                <div className="py-4">
-                  <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden max-w-xs mx-auto">
-                    <div className="h-full w-2/5 bg-indigo-600 rounded-full animate-pulse" />
-                  </div>
-                  <p className="text-sm text-gray-500 mt-3 text-center">
-                    Reading scan…
-                  </p>
-                </div>
-              ) : preview ? (
+              {preview ? (
                 <>
                   <h3 className="text-lg font-semibold mb-3">
                     {preview.customerType === "guest" ? "Guest" : "Employee"}
@@ -479,7 +521,7 @@ export default function SelfBillingPage() {
                         Cancel
                       </button>
                       <button
-                        onClick={() => handleConfirm(false)}
+                        onClick={() => handleConfirm()}
                         disabled={processing}
                         className="px-4 py-2 bg-indigo-600 text-white rounded text-sm"
                       >
@@ -496,44 +538,100 @@ export default function SelfBillingPage() {
             </div>
           </div>
         </div>
-        {modalOpen && (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 max-w-md mx-4">
-              <h3 className="text-lg font-semibold mb-2">Confirm Billing</h3>
-              <p className="text-sm text-gray-700 mb-4">
-                It appears this meal may have already been billed for today.
-                {preview?.warnings?.priorException ? (
-                  <>
-                    {" "}
-                    A prior billing exists with an exception flag for this meal.
-                  </>
-                ) : null}
-                Do you want to proceed? If this wasn't you, please contact your
-                administrator.
-              </p>
-              <div className="flex justify-end gap-3">
-                <button
-                  onClick={() => {
-                    handleCancel();
-                  }}
-                  className="px-4 py-2 border rounded"
+
+        {resolvingScan && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+            <div className="w-full max-w-sm rounded-2xl bg-white p-8 text-center shadow-2xl">
+              <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-full bg-indigo-50">
+                <svg
+                  width="40"
+                  height="40"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  aria-hidden
                 >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => {
-                    setModalOpen(false);
-                    // call confirm to proceed with exception flag
-                    void handleConfirm(true);
-                  }}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded"
-                >
-                  Proceed
-                </button>
+                  <rect
+                    x="2"
+                    y="2"
+                    width="8"
+                    height="8"
+                    stroke="#4F46E5"
+                    strokeWidth="1.5"
+                    fill="#EEF2FF"
+                  />
+                  <rect
+                    x="14"
+                    y="2"
+                    width="8"
+                    height="8"
+                    stroke="#4F46E5"
+                    strokeWidth="1.5"
+                    fill="#EEF2FF"
+                  />
+                  <rect
+                    x="2"
+                    y="14"
+                    width="8"
+                    height="8"
+                    stroke="#4F46E5"
+                    strokeWidth="1.5"
+                    fill="#EEF2FF"
+                  />
+                  <rect x="9" y="9" width="6" height="6" fill="#4F46E5" />
+                </svg>
               </div>
+              <div
+                className="mx-auto mb-5 h-12 w-12 animate-spin rounded-full border-4 border-indigo-100 border-t-indigo-600"
+                role="status"
+                aria-label="Loading"
+              />
+              <h3 className="text-lg font-semibold text-gray-900">
+                Processing QR Code
+              </h3>
+              <p className="mt-2 text-sm leading-relaxed text-gray-600">
+                Please wait a moment while we process the QR Code
+              </p>
             </div>
           </div>
         )}
+
+        {alertModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+            <div className="w-full max-w-md rounded-2xl bg-white p-8 text-center shadow-2xl">
+              <div
+                className={`mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-full ${
+                  alertModal.variant === "limit"
+                    ? "bg-amber-50"
+                    : alertModal.variant === "warning"
+                      ? "bg-orange-50"
+                      : "bg-red-50"
+                }`}
+              >
+                <i
+                  className={`text-4xl ${
+                    alertModal.variant === "limit"
+                      ? "ri-error-warning-fill text-amber-500"
+                      : alertModal.variant === "warning"
+                        ? "ri-qr-scan-2-line text-orange-500"
+                        : "ri-close-circle-fill text-red-500"
+                  }`}
+                  aria-hidden
+                />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">
+                {alertModal.title}
+              </h3>
+              <p className="mt-3 text-sm leading-relaxed text-gray-700">
+                {alertModal.message}
+              </p>
+              <p className="mt-4 text-xs text-gray-400">
+                This message will close automatically
+              </p>
+            </div>
+          </div>
+        )}
+
         <Footer />
       </div>
     </div>

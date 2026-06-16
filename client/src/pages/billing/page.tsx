@@ -33,18 +33,9 @@ export default function Billing() {
     useState("");
   const [newSupportStaffCompany, setNewSupportStaffCompany] = useState("");
   const [companyNames, setCompanyNames] = useState<string[]>([]);
-  const [showValidationModal, setShowValidationModal] = useState(false);
-  const [validationData, setValidationData] = useState<{
-    itemName: string;
-    employeeName: string;
-    consumedToday: { breakfast: number; lunch: number };
-  } | null>(null);
-  const [showSubmitExceptionModal, setShowSubmitExceptionModal] = useState(false);
-  const [serverWarningState, setServerWarningState] = useState<{ breakfastExceeded?: boolean; lunchExceeded?: boolean } | null>(null);
-  const [pendingSubmit, setPendingSubmit] = useState<{ payload: any; billingData: any } | null>(null);
-  const [pendingItem, setPendingItem] = useState<(typeof menuItems)[0] | null>(
-    null
-  );
+  const [limitMessage, setLimitMessage] = useState<string | null>(null);
+  const limitMessageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const MEAL_LIMIT_MSG_MS = 3000;
   const [priceMaster, setPriceMaster] = useState<PriceMaster>({
     employee: { breakfast: 20, lunch: 48 },
     company: { breakfast: 135, lunch: 165 },
@@ -354,36 +345,29 @@ export default function Billing() {
     }
   }, [filteredCustomers, customerSearch, selectedEmployee, selectedSupportStaff, selectedGuest, handleCustomerSelect]);
 
-  // Check if employee/support staff has already consumed meals today
-  const checkConsumption = (personId: string, isEmployee: boolean = true) => {
-    const today = new Date().toISOString().split("T")[0];
-    const billingHistory = JSON.parse(
-      localStorage.getItem("billingHistory") || "[]"
-    );
+  const showMealLimitMessage = useCallback((message: string) => {
+    if (limitMessageTimerRef.current) clearTimeout(limitMessageTimerRef.current);
+    setLimitMessage(message);
+    limitMessageTimerRef.current = setTimeout(() => {
+      setLimitMessage(null);
+      limitMessageTimerRef.current = null;
+    }, MEAL_LIMIT_MSG_MS);
+  }, []);
 
-    const todaysBills = billingHistory.filter(
-      (bill: any) =>
-        bill.date === today &&
-        !bill.isGuest &&
-        (isEmployee
-          ? !bill.isSupportStaff && bill.customer?.employeeId === personId
-          : bill.isSupportStaff && bill.customer?.staffId === personId)
-    );
-
-    let breakfastCount = 0;
-    let lunchCount = 0;
-
-    todaysBills.forEach((bill: any) => {
-      bill.items.forEach((item: any) => {
-        if (item.name === "Breakfast") {
-          breakfastCount += item.quantity;
-        } else if (item.name === "Lunch") {
-          lunchCount += item.quantity;
-        }
-      });
-    });
-
-    return { breakfast: breakfastCount, lunch: lunchCount };
+  const mealLimitMessageFromWarnings = (
+    warnings: { breakfastExceeded?: boolean; lunchExceeded?: boolean },
+    itemName?: string,
+  ) => {
+    if (warnings.breakfastExceeded && warnings.lunchExceeded) {
+      return "You have already consumed breakfast and lunch today.";
+    }
+    if (warnings.breakfastExceeded || itemName === "Breakfast") {
+      return "You have already consumed breakfast today.";
+    }
+    if (warnings.lunchExceeded || itemName === "Lunch") {
+      return "You have already consumed lunch today.";
+    }
+    return "Daily meal limit reached.";
   };
 
   const addToCart = async (item: (typeof menuItems)[0]) => {
@@ -393,50 +377,76 @@ export default function Billing() {
       return;
     }
 
-    // Only validate for employees and support staff, not guests
-    if (!isGuest) {
-      let person: any = null;
-      let personName = "";
-      let isEmployee = true;
+    let customerData: Employee | Guest | SupportStaff | null = null;
+    let customerType: "employee" | "guest" | "supportStaff" = "employee";
+    let customerId: string | null = null;
 
-      if (isSupportStaff && selectedSupportStaff) {
-        person = supportStaff.find(
-          (staff) => staff.id.toString() === selectedSupportStaff
-        );
-        personName = person?.name || "";
-        isEmployee = false;
-      } else if (!isSupportStaff && selectedEmployee) {
-        person = employees.find(
-          (emp) => emp.id.toString() === selectedEmployee
-        );
-        personName = person?.employeeName || "";
-        isEmployee = true;
-      }
+    if (isGuest) {
+      customerData =
+        selectedGuestObj ||
+        allGuests.find((g) => g.id.toString() === selectedGuest) ||
+        null;
+      customerType = "guest";
+      customerId = selectedGuest || null;
+    } else if (isSupportStaff) {
+      customerData =
+        selectedSupportStaffObj ||
+        supportStaff.find((s) => s.id.toString() === selectedSupportStaff) ||
+        null;
+      customerType = "supportStaff";
+      customerId = (customerData as SupportStaff | null)?.staffId || null;
+    } else {
+      customerData =
+        selectedEmployeeObj ||
+        employees.find((e) => e.id.toString() === selectedEmployee) ||
+        null;
+      customerType = "employee";
+      customerId = (customerData as Employee | null)?.employeeId || null;
+    }
 
-      if (person) {
-        const personId = isEmployee ? person.employeeId : person.staffId;
-        const consumedToday = checkConsumption(personId, isEmployee);
-
-        // Check if already consumed today
-        let wouldExceedLimit = false;
-
-        if (item.name === "Breakfast") {
-          wouldExceedLimit = consumedToday.breakfast >= 1;
-        } else if (item.name === "Lunch") {
-          wouldExceedLimit = consumedToday.lunch >= 1;
-        }
-
-        if (wouldExceedLimit) {
-          // Show validation modal
-          setValidationData({
-            itemName: item.name,
-            employeeName: personName,
-            consumedToday,
-          });
-          setPendingItem(item);
-          setShowValidationModal(true);
+    if (customerId) {
+      try {
+        const today = new Date().toISOString().split("T")[0];
+        const itemPrice =
+          item.name === "Breakfast"
+            ? priceMaster.employee.breakfast
+            : priceMaster.employee.lunch;
+        const validateRes = await apiFetch(`/transactions?validateOnly=true`, {
+          method: "POST",
+          body: JSON.stringify({
+            customerType,
+            customerId,
+            customerName: isGuest
+              ? (customerData as Guest | null)?.name || null
+              : isSupportStaff
+                ? (customerData as SupportStaff | null)?.name || null
+                : (customerData as Employee | null)?.employeeName || null,
+            companyName: customerData?.companyName || null,
+            date: today,
+            time: new Date().toLocaleTimeString(),
+            items: [
+              {
+                id: item.id,
+                name: item.name,
+                quantity: 1,
+                actualPrice: itemPrice,
+              },
+            ],
+            totalItems: 1,
+            totalAmount: itemPrice,
+          }),
+        });
+        const warnings = validateRes?.warnings || {};
+        const exceeded =
+          (item.name === "Breakfast" && warnings.breakfastExceeded) ||
+          (item.name === "Lunch" && warnings.lunchExceeded);
+        if (exceeded) {
+          showMealLimitMessage(mealLimitMessageFromWarnings(warnings, item.name));
           return;
         }
+      } catch (err: any) {
+        showMealLimitMessage(err?.message || "Unable to validate meal limit.");
+        return;
       }
     }
 
@@ -446,24 +456,6 @@ export default function Billing() {
     // Automatically print the bill
     await handlePrintBillDirect([{ ...item, quantity: 1 }]);
   };
-
-  const handleValidationConfirm = async (addException: boolean) => {
-    if (addException && pendingItem) {
-      // Set cart with only this item (quantity 1) with exception flag
-      const itemWithException = { ...pendingItem, quantity: 1, isException: true };
-      setCart([itemWithException]);
-      
-      // Automatically print the bill
-      await handlePrintBillDirect([itemWithException]);
-    }
-
-    // Close modal and reset
-    setShowValidationModal(false);
-    setValidationData(null);
-    setPendingItem(null);
-  };
-
-  // Remove updateQuantity function as quantity controls are removed
 
   const addGuest = async () => {
     if (newGuestName && guestCompanyName) {
@@ -613,28 +605,24 @@ export default function Billing() {
           id: item.id,
           name: item.name,
           quantity: item.quantity,
-          isException: item.isException || false,
           actualPrice: itemPrice,
         }],
         totalItems: item.quantity,
         totalAmount: totalAmount,
       };
 
-      // Server-side validation (skip for guests)
-      if (!isGuest && payload.customerId) {
+      // Server-side validation (employees, guests, support staff)
+      if (payload.customerId) {
         const validateRes = await apiFetch(`/transactions?validateOnly=true`, {
           method: "POST",
           body: JSON.stringify(payload),
         });
         const warnings = validateRes?.warnings || {};
         if (warnings.breakfastExceeded || warnings.lunchExceeded) {
-          setServerWarningState({
-            breakfastExceeded: !!warnings.breakfastExceeded,
-            lunchExceeded: !!warnings.lunchExceeded,
-          });
-          setPendingSubmit({ payload, billingData });
-          setShowSubmitExceptionModal(true);
-          return; // wait for user choice
+          showMealLimitMessage(
+            mealLimitMessageFromWarnings(warnings, item.name),
+          );
+          return;
         }
       }
 
@@ -653,7 +641,7 @@ export default function Billing() {
       console.log("html", html);
       await printReceipt(html, billingData);
     } catch (err: any) {
-      alert(err.message || "Failed to save transaction");
+      showMealLimitMessage(err.message || "Failed to save transaction");
       return;
     }
 
@@ -729,71 +717,6 @@ export default function Billing() {
     }
   };
 
-  const handleSubmitExceptionChoice = async (proceedWithException: boolean) => {
-    const state = pendingSubmit;
-    if (!state) {
-      setShowSubmitExceptionModal(false);
-      return;
-    }
-    if (!proceedWithException) {
-      // Cancel
-      setShowSubmitExceptionModal(false);
-      setServerWarningState(null);
-      setPendingSubmit(null);
-      return;
-    }
-
-    try {
-      // Apply exception flags to exceeded items - only one item
-      const warn = serverWarningState || {};
-      const convert = (items: any[]) =>
-        items.map((it: any) => {
-          const isBreakfast = it.name === "Breakfast";
-          const isLunch = it.name === "Lunch";
-          if ((isBreakfast && warn.breakfastExceeded) || (isLunch && warn.lunchExceeded)) {
-            return { ...it, isException: true };
-          }
-          return it;
-        });
-
-      const payload = { ...state.payload, items: convert(state.payload.items) };
-      const billingData = { ...state.billingData, items: convert(state.billingData.items) };
-
-      const response = await apiFetch("/transactions", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-
-      const transactionId = response?.id || response?.data?.id || Date.now().toString();
-      billingData.id = transactionId.toString();
-
-      const html = buildReceiptHtml(billingData);
-      await printReceipt(html, billingData);
-
-      // Clear modal state
-      setShowSubmitExceptionModal(false);
-      setServerWarningState(null);
-      setPendingSubmit(null);
-
-      // Clear form
-      setCart([]);
-      setSelectedEmployee("");
-      setSelectedEmployeeObj(null);
-      setSelectedGuest("");
-      setSelectedGuestObj(null);
-      setSelectedSupportStaff("");
-      setSelectedSupportStaffObj(null);
-      setCustomerSearch("");
-      setIsGuest(false);
-      setIsSupportStaff(false);
-    } catch (err: any) {
-      setShowSubmitExceptionModal(false);
-      alert(err?.message || "Failed to save transaction");
-    }
-  };
-
-  // use shared receipt builder (imported)
-
   const getSelectedPersonName = () => {
     if (selectedGuest) {
       const guest = allGuests.find((g) => g.id.toString() === selectedGuest);
@@ -819,155 +742,11 @@ export default function Billing() {
       <div className="max-w-7xl mx-auto h-full">
         {/* Hidden receipt container for browser fallback printing */}
         <div ref={receiptRef} id="thermal-receipt-host"></div>
-        {/* Validation Modal */}
-        {showValidationModal && validationData && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
-              <div className="p-6 border-b border-gray-200">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-xl font-semibold text-red-600 flex items-center">
-                    <i className="ri-alert-line mr-2"></i>
-                    Daily Consumption Limit Reached
-                  </h2>
-                  <button
-                    onClick={() => handleValidationConfirm(false)}
-                    className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"
-                  >
-                    <i className="ri-close-line text-xl"></i>
-                  </button>
-                </div>
-              </div>
-
-              <div className="p-6">
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
-                  <div className="flex items-start">
-                    <i className="ri-warning-line text-yellow-600 text-xl mr-3 mt-0.5"></i>
-                    <div>
-                      <h3 className="font-semibold text-yellow-800 mb-2">
-                        Daily Limit Alert
-                      </h3>
-                      <p className="text-sm text-blue-700 mb-3">
-                        <strong>{validationData.employeeName}</strong> has
-                        already consumed today:
-                      </p>
-                      <div className="space-y-1 text-sm text-blue-700">
-                        <div className="flex items-center">
-                          <i className="ri-restaurant-line mr-2"></i>
-                          <span>
-                            Breakfast: {validationData.consumedToday.breakfast}{" "}
-                            time(s) (Daily Limit: 1)
-                          </span>
-                        </div>
-                        <div className="flex items-center">
-                          <i className="ri-bowl-line mr-2"></i>
-                          <span>
-                            Lunch: {validationData.consumedToday.lunch} time(s)
-                            (Daily Limit: 1)
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-                  <div className="flex items-start">
-                    <i className="ri-information-line text-blue-600 text-xl mr-3 mt-0.5"></i>
-                    <div>
-                      <h4 className="font-semibold text-blue-800 mb-2">
-                        Exception Option Available
-                      </h4>
-                      <p className="text-sm text-blue-700">
-                        You can add an additional{" "}
-                        <strong>{validationData.itemName.toLowerCase()}</strong>{" "}
-                        as an exception (e.g., consuming on behalf of someone
-                        else or special circumstances).
-                      </p>
-                      <p className="text-xs text-blue-600 mt-2 font-medium">
-                        Exception items will be marked separately in the bill.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex space-x-3">
-                  <button
-                    onClick={() => handleValidationConfirm(false)}
-                    className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 cursor-pointer whitespace-nowrap font-medium transition-colors"
-                  >
-                    <i className="ri-close-line mr-2"></i>
-                    Cancel
-                  </button>
-                  <button
-                    onClick={() => handleValidationConfirm(true)}
-                    className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 cursor-pointer whitespace-nowrap font-medium transition-colors flex items-center justify-center"
-                  >
-                    <i className="ri-add-line mr-2"></i>
-                    Add as Exception
-                  </button>
-                </div>
-              </div>
-            </div>
+        {limitMessage ? (
+          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+            {limitMessage}
           </div>
-        )}
-
-        {/* Submit Exception Modal */}
-        {showSubmitExceptionModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
-              <div className="p-6 border-b border-gray-200">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-xl font-semibold text-red-600 flex items-center">
-                    <i className="ri-alert-line mr-2"></i>
-                    Already obtained meal today
-                  </h2>
-                  <button
-                    onClick={() => handleSubmitExceptionChoice(false)}
-                    className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"
-                  >
-                    <i className="ri-close-line text-xl"></i>
-                  </button>
-                </div>
-              </div>
-
-              <div className="p-6">
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4 text-sm text-yellow-800">
-                  {serverWarningState?.breakfastExceeded && (
-                    <div className="flex items-center mb-1">
-                      <i className="ri-restaurant-line mr-2"></i>
-                      Breakfast already taken today.
-                    </div>
-                  )}
-                  {serverWarningState?.lunchExceeded && (
-                    <div className="flex items-center">
-                      <i className="ri-bowl-line mr-2"></i>
-                      Lunch already taken today.
-                    </div>
-                  )}
-                </div>
-
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 text-sm text-blue-800">
-                  Proceed as an Exception to record an additional meal for today. Exception items will be marked in bill and reports.
-                </div>
-
-                <div className="flex space-x-3">
-                  <button
-                    onClick={() => handleSubmitExceptionChoice(false)}
-                    className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 cursor-pointer whitespace-nowrap font-medium transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={() => handleSubmitExceptionChoice(true)}
-                    className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 cursor-pointer whitespace-nowrap font-medium transition-colors"
-                  >
-                    Exception
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        ) : null}
 
         {/* Add Customer Modal */}
         {showAddCustomerModal && (
@@ -1526,7 +1305,6 @@ interface CartItem {
   price: number;
   quantity: number;
   category: string;
-  isException?: boolean;
 }
 
 interface Employee {

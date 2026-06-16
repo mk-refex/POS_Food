@@ -214,7 +214,7 @@ export const mastersApi = {
 export const employeeAuthApi = {
   selfBillPreview: (employeeId: string, quantity?: number) =>
     apiFetch(`/employee-auth/self-bill/preview?employeeId=${encodeURIComponent(employeeId)}${quantity ? `&quantity=${Number(quantity)}` : ''}`),
-  selfBill: (payload: { employeeId: string; quantity?: number; userId?: number | string; forceException?: boolean }) =>
+  selfBill: (payload: { employeeId: string; quantity?: number; userId?: number | string }) =>
     apiFetch('/employee-auth/self-bill', { method: 'POST', body: JSON.stringify(payload) }),
 };
 

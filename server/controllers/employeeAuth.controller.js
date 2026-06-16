@@ -3,6 +3,11 @@ import { Op } from 'sequelize';
 import { Employee } from '../models/index.js';
 import { signToken } from '../middleware/auth.js';
 import { emitTransactionCreated } from '../socket.js';
+import {
+  getDailyMealTotals,
+  mealLimitErrorMessage,
+  mealLimitWarnings,
+} from '../services/mealLimit.js';
 
 // In-memory OTP store: key = mobileNumber (normalized) or employeeId, value = { otp, expiresAt, employeeId }
 const otpStore = new Map();
@@ -298,7 +303,7 @@ export async function googleCallback(req, res) {
   }
 }
 
-/** Determine meal from server local time. Same logic used in preview and actual bill so they match. Breakfast 6–11, Lunch 12–14:59, else lunch. */
+/** Determine meal from server local time. Breakfast 6–11, Lunch 12–15, else lunch. */
 function getMealByServerTime() {
   const h = new Date().getHours();
   if (h >= 6 && h <= 11) return 'breakfast';
@@ -352,24 +357,17 @@ export async function selfBillPreview(req, res) {
       const monthlySummary = { breakfastCount: 0, lunchCount: 0 };
       let warnings = {};
       try {
-        const prior = await Transaction.findAll({
-          where: { date: today, customerType: 'guest', customerId: String(guest.id) },
+        const totals = await getDailyMealTotals(Transaction, {
+          date: today,
+          customerType: 'guest',
+          customerId: String(guest.id),
         });
-        const totals = prior.reduce((acc, t) => {
-          for (const it of t.items || []) {
-            if (it.isException) continue;
-            if (it.name === 'Breakfast') acc.breakfast += Number(it.quantity || 0);
-            if (it.name === 'Lunch') acc.lunch += Number(it.quantity || 0);
-          }
-          return acc;
-        }, { breakfast: 0, lunch: 0 });
         const qtyReq = Math.max(1, Number(req.query.quantity || 1));
-        if (meal === 'breakfast' && totals.breakfast + qtyReq > 1) warnings.breakfastExceeded = true;
-        if (meal === 'lunch' && totals.lunch + qtyReq > 1) warnings.lunchExceeded = true;
-        const priorExceptionExists = prior.some((t) =>
-          (t.items || []).some((it) => String(it.name).toLowerCase() === meal && !!it.isException)
-        );
-        if (priorExceptionExists) warnings.priorException = true;
+        const items = [{
+          name: meal === 'breakfast' ? 'Breakfast' : 'Lunch',
+          quantity: qtyReq,
+        }];
+        warnings = mealLimitWarnings(totals, items, qtyReq);
       } catch (e) { /* ignore */ }
       return res.json({
         customerType: 'guest',
@@ -396,23 +394,16 @@ export async function selfBillPreview(req, res) {
     const qtyReq = Math.max(1, Number(req.query.quantity || 1));
     let warnings = {};
     try {
-      const prior = await Transaction.findAll({
-        where: { date: today, customerType: 'employee', customerId: employee.employeeId },
+      const totals = await getDailyMealTotals(Transaction, {
+        date: today,
+        customerType: 'employee',
+        customerId: employee.employeeId,
       });
-      const totals = prior.reduce((acc, t) => {
-        for (const it of t.items || []) {
-          if (it.isException) continue;
-          if (it.name === 'Breakfast') acc.breakfast += Number(it.quantity || 0);
-          if (it.name === 'Lunch') acc.lunch += Number(it.quantity || 0);
-        }
-        return acc;
-      }, { breakfast: 0, lunch: 0 });
-      if (meal === 'breakfast' && totals.breakfast + qtyReq > 1) warnings.breakfastExceeded = true;
-      if (meal === 'lunch' && totals.lunch + qtyReq > 1) warnings.lunchExceeded = true;
-      const priorExceptionExists = prior.some((t) =>
-        (t.items || []).some((it) => String(it.name).toLowerCase() === meal && !!it.isException)
-      );
-      if (priorExceptionExists) warnings.priorException = true;
+      const items = [{
+        name: meal === 'breakfast' ? 'Breakfast' : 'Lunch',
+        quantity: qtyReq,
+      }];
+      warnings = mealLimitWarnings(totals, items, qtyReq);
     } catch (e) { /* ignore */ }
 
     return res.json({
@@ -458,8 +449,16 @@ export async function selfBill(req, res) {
         name: meal === 'breakfast' ? 'Breakfast' : 'Lunch',
         quantity: qty,
         actualPrice: price,
-        ...(body.forceException ? { isException: true } : {}),
       }];
+      const totals = await getDailyMealTotals(Transaction, {
+        date,
+        customerType: 'guest',
+        customerId: String(guest.id),
+      });
+      const warnings = mealLimitWarnings(totals, items, qty);
+      if (warnings.breakfastExceeded || warnings.lunchExceeded) {
+        return res.status(400).json({ message: mealLimitErrorMessage(warnings), warnings });
+      }
       const lockKey = `guest:${guest.id}:${date}:${meal}:${qty}`;
       if (selfBillLocks.has(lockKey)) return res.status(200).json({ message: 'Duplicate request', duplicate: true });
       selfBillLocks.add(lockKey);
@@ -503,8 +502,17 @@ export async function selfBill(req, res) {
       name: meal === 'breakfast' ? 'Breakfast' : 'Lunch',
       quantity: qty,
       actualPrice: price,
-      ...(body.forceException ? { isException: true } : {}),
     }];
+
+    const totals = await getDailyMealTotals(Transaction, {
+      date,
+      customerType: 'employee',
+      customerId: employee.employeeId,
+    });
+    const warnings = mealLimitWarnings(totals, items, qty);
+    if (warnings.breakfastExceeded || warnings.lunchExceeded) {
+      return res.status(400).json({ message: mealLimitErrorMessage(warnings), warnings });
+    }
 
     const lockKey = `${employee.employeeId}:${date}:${meal}:${qty}`;
     if (selfBillLocks.has(lockKey)) return res.status(200).json({ message: 'Duplicate request', duplicate: true });
