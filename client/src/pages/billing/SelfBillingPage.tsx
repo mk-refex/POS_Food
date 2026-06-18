@@ -510,7 +510,7 @@ export default function SelfBillingPage() {
                   onKeyDown={handleScanKeyDown}
                   onChange={handleScanChange}
                   onPaste={handleScanChange}
-                  className="opacity-1 absolute left-0 top-0"
+                  className="opacity-0 absolute left-0 top-0"
                   aria-label="Scan QR code"
                 />
               </div>
