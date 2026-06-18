@@ -45,6 +45,8 @@ export default function SelfBillingPage() {
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const lockedRef = useRef<boolean>(false);
+  const confirmingRef = useRef(false);
+  const previewRef = useRef<any | null>(null);
   const [preview, setPreview] = useState<any | null>(null);
   const [alertModal, setAlertModal] = useState<AlertModalState>(null);
   const [countdown, setCountdown] = useState<number>(2);
@@ -103,20 +105,33 @@ export default function SelfBillingPage() {
   }, []);
 
   useEffect(() => {
-    if (preview) {
-      setCountdown(2);
-      timerRef.current = setInterval(() => {
-        setCountdown((c) => {
-          if (c <= 1) {
-            clearInterval(timerRef.current);
-            handleConfirm();
-            return 0;
-          }
-          return c - 1;
-        });
-      }, 1000);
+    previewRef.current = preview;
+  }, [preview]);
+
+  const clearConfirmTimer = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
     }
-    return () => clearInterval(timerRef.current);
+  };
+
+  useEffect(() => {
+    if (!preview) return;
+
+    setCountdown(2);
+    let remaining = 2;
+    const id = setInterval(() => {
+      remaining -= 1;
+      setCountdown(remaining);
+      if (remaining <= 0) {
+        clearInterval(id);
+        timerRef.current = null;
+        void handleConfirm();
+      }
+    }, 1000);
+    timerRef.current = id;
+
+    return clearConfirmTimer;
   }, [preview]);
 
   const processScanned = async (v: string) => {
@@ -190,6 +205,7 @@ export default function SelfBillingPage() {
         return;
       }
       setPreview(res);
+      previewRef.current = res;
       setResolvingScan(false);
     } catch (err: any) {
       showAlertModal(
@@ -244,26 +260,45 @@ export default function SelfBillingPage() {
   }, []);
 
   const handleCancel = () => {
-    clearInterval(timerRef.current);
+    clearConfirmTimer();
+    confirmingRef.current = false;
     setPreview(null);
+    previewRef.current = null;
     setCountdown(2);
     lockedRef.current = false;
     resetScanInput();
   };
 
   const handleConfirm = async () => {
-    if (!preview) return;
-    if (processing) return;
+    const activePreview = previewRef.current;
+    if (!activePreview) return;
+    if (confirmingRef.current) return;
+
+    confirmingRef.current = true;
+    clearConfirmTimer();
     setProcessing(true);
     try {
       const currentUser = getCurrentUser();
       const data = await employeeAuthApi.selfBill({
-        employeeId: preview.employee.employeeId,
+        employeeId: activePreview.employee.employeeId,
         quantity: 1,
         userId: currentUser?.id ?? currentUser?.userId ?? undefined,
       });
-      const trx = data.transaction;
-      // build receipt html and open print window
+
+      if (data?.duplicate && !data?.transaction) {
+        setPreview(null);
+        previewRef.current = null;
+        lockedRef.current = false;
+        resetScanInput();
+        return;
+      }
+
+      const trx = data?.transaction;
+      if (!trx) {
+        throw new Error(
+          "Billing completed but receipt details were not returned. Please check with the cafeteria desk.",
+        );
+      }
       const billingData = {
         id: trx.id,
         date: trx.date,
@@ -323,6 +358,7 @@ export default function SelfBillingPage() {
         }
       }
       setPreview(null);
+      previewRef.current = null;
       lockedRef.current = false;
       resetScanInput();
     } catch (err: any) {
@@ -336,9 +372,11 @@ export default function SelfBillingPage() {
         showAlertModal("Billing Failed", msg, "error");
       }
       setPreview(null);
+      previewRef.current = null;
       lockedRef.current = false;
       resetScanInput();
     } finally {
+      confirmingRef.current = false;
       setProcessing(false);
     }
   };
@@ -472,7 +510,7 @@ export default function SelfBillingPage() {
                   onKeyDown={handleScanKeyDown}
                   onChange={handleScanChange}
                   onPaste={handleScanChange}
-                  className="opacity-0 absolute left-0 top-0"
+                  className="opacity-1 absolute left-0 top-0"
                   aria-label="Scan QR code"
                 />
               </div>
