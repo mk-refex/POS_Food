@@ -189,10 +189,14 @@ export const mastersApi = {
   getApiConfig: () => apiFetch('/masters/api-config'),
   updateApiConfig: (data: any) => apiFetch('/admin/api-config', { method: 'PUT', body: JSON.stringify(data) }),
 
-  // SSO Config (Google) – admin only
-  getSsoConfig: () => apiFetch('/admin/sso-config'),
-  updateSsoConfig: (data: { provider?: string; clientId?: string; clientSecret?: string; redirectUri?: string | null; frontendBaseUrl?: string | null }) =>
-    apiFetch('/admin/sso-config', { method: 'PUT', body: JSON.stringify(data) }),
+  // SSO providers – admin CRUD
+  listSsoProviders: () => apiFetch('/admin/sso-providers'),
+  createSsoProvider: (data: Record<string, unknown>) =>
+    apiFetch('/admin/sso-providers', { method: 'POST', body: JSON.stringify(data) }),
+  updateSsoProvider: (id: number, data: Record<string, unknown>) =>
+    apiFetch(`/admin/sso-providers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteSsoProvider: (id: number) =>
+    apiFetch(`/admin/sso-providers/${id}`, { method: 'DELETE' }),
 
   // SMTP Config (admin only)
   getSmtpConfig: () => apiFetch('/admin/smtp-config'),
@@ -212,6 +216,7 @@ export const mastersApi = {
 
 // Employee Auth related APIs (preview and self-billing)
 export const employeeAuthApi = {
+  listSsoProviders: () => apiFetch('/employee-auth/sso-providers'),
   selfBillPreview: (employeeId: string, quantity?: number) =>
     apiFetch(`/employee-auth/self-bill/preview?employeeId=${encodeURIComponent(employeeId)}${quantity ? `&quantity=${Number(quantity)}` : ''}`),
   selfBill: (payload: { employeeId: string; quantity?: number; userId?: number | string }) =>

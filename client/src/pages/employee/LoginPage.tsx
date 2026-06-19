@@ -17,17 +17,24 @@ import {
 import refexLogo from "../../assets/refex-logo.png";
 import loginBg from "../../assets/login-bg.png";
 import { PersonOutlined, PinOutlined, ErrorOutline } from "@mui/icons-material";
-import { setEmployeeSession, isEmployeeAuthenticated } from "../../api/client";
+import { setEmployeeSession, isEmployeeAuthenticated, employeeAuthApi } from "../../api/client";
 
-const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
-  no_code: "Google did not return an authorization code. Try again.",
-  not_configured: "Google SSO is not configured. Contact admin.",
-  token_failed: "Google sign-in failed (token). Try again.",
-  profile_failed: "Could not load your Google profile.",
-  no_email: "Your Google account has no email.",
+type SsoProviderButton = {
+  provider: string;
+  displayName?: string | null;
+  iconUrl?: string | null;
+  sortOrder?: number;
+};
+
+const SSO_ERROR_MESSAGES: Record<string, string> = {
+  no_code: "SSO did not return an authorization code. Try again.",
+  not_configured: "SSO is not configured. Contact admin.",
+  token_failed: "SSO sign-in failed (token). Try again.",
+  profile_failed: "Could not load your SSO profile.",
+  no_email: "Your SSO account has no email.",
   employee_not_found:
     "Your email is not registered as an employee. Contact admin.",
-  login_failed: "Google sign-in failed. Try again.",
+  login_failed: "SSO sign-in failed. Try again.",
 };
 
 function buildIdentifierBody(identifier: string) {
@@ -49,11 +56,19 @@ export default function EmployeeLoginPage() {
   const [otp, setOtp] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [ssoProviders, setSsoProviders] = useState<SsoProviderButton[]>([]);
+
+  useEffect(() => {
+    employeeAuthApi
+      .listSsoProviders()
+      .then((rows) => setSsoProviders(Array.isArray(rows) ? rows : []))
+      .catch(() => setSsoProviders([]));
+  }, []);
 
   useEffect(() => {
     const err = searchParams.get("error");
-    if (err && GOOGLE_ERROR_MESSAGES[err]) {
-      setError(GOOGLE_ERROR_MESSAGES[err]);
+    if (err && SSO_ERROR_MESSAGES[err]) {
+      setError(SSO_ERROR_MESSAGES[err]);
       setSearchParams(
         (p) => {
           const next = new URLSearchParams(p);
@@ -168,7 +183,7 @@ export default function EmployeeLoginPage() {
           </Typography>
           <Typography variant="body1" color="text.secondary">
             View your food consumption and transaction history. Sign in with OTP
-            (email) or with Google.
+            (email) or SSO.
           </Typography>
           <Box
             sx={{
@@ -316,39 +331,72 @@ export default function EmployeeLoginPage() {
             </Box>
           )}
 
-          <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: "divider" }}>
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              sx={{ mb: 1.5, textAlign: "center" }}
-            >
-              Or
-            </Typography>
-            <Button
-              fullWidth
-              variant="outlined"
-              size="large"
-              href={`${baseUrl}/employee-auth/google?state=${encodeURIComponent(window.location.origin)}`}
-              sx={{ textTransform: "none" }}
-              startIcon={
-                <Box
-                  component="span"
-                  sx={{
-                    width: 20,
-                    height: 20,
-                    "& img": { width: "100%", height: "100%" },
-                  }}
-                >
-                  <img
-                    src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
-                    alt="Google"
-                  />
-                </Box>
-              }
-            >
-              Sign in with Google
-            </Button>
-          </Box>
+          {ssoProviders.length > 0 && (
+            <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: "divider" }}>
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ mb: 1.5, textAlign: "center" }}
+              >
+                Or Sign in with
+              </Typography>
+              <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+                {ssoProviders.map((provider) => {
+                  const label =
+                    provider.displayName?.trim() ||
+                    provider.provider.replace(/-/g, " ");
+                  const iconUrl = provider.iconUrl?.trim() || "";
+                  return (
+                    <Button
+                      key={provider.provider}
+                      fullWidth
+                      variant="outlined"
+                      size="large"
+                      href={`${baseUrl}/employee-auth/sso/${encodeURIComponent(provider.provider)}?state=${encodeURIComponent(window.location.origin)}`}
+                      sx={{
+                        textTransform: "none",
+                        justifyContent: "center",
+                        gap: 1.25,
+                        py: 1.25,
+                        "& .MuiButton-startIcon": {
+                          margin: 0,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        },
+                      }}
+                      startIcon={
+                        iconUrl ? (
+                          <Box
+                            component="span"
+                            sx={{
+                              width: 120,
+                              height: 20,
+                              flexShrink: 0,
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              lineHeight: 0,
+                              "& img": {
+                                width: "100%",
+                                height: "100%",
+                                objectFit: "contain",
+                                display: "block",
+                              },
+                            }}
+                          >
+                            <img src={iconUrl} alt="" />
+                          </Box>
+                        ) : undefined
+                      }
+                    >
+                      {/* Sign in with {label} */}
+                    </Button>
+                  );
+                })}
+              </Box>
+            </Box>
+          )}
 
           <Box textAlign="center" sx={{ mt: 2 }}>
             <Button

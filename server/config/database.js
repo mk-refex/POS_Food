@@ -22,7 +22,7 @@ export async function initializeDatabase() {
     await sequelize.sync({alter: false});
     // Ensure sso_config has all columns (e.g. redirect_uri) if model was updated
     try {
-      await SsoConfig.sync({ alter: false });
+      await SsoConfig.sync({ alter: true });
     } catch (e) {
       console.warn("SsoConfig.sync(alter) skipped:", e?.message || e);
     }

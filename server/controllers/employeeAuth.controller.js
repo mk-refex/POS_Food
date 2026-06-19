@@ -195,53 +195,153 @@ export async function qrLogin(req, res) {
   }
 }
 
-// Google SSO: redirect to Google OAuth
-export async function googleRedirect(req, res) {
+function loginErrorRedirect(state, error) {
+  const base = (state || '').toString().replace(/\/$/, '');
+  return base ? `${base}/employee/login?error=${error}` : `/employee/login?error=${error}`;
+}
+
+function buildCallbackRedirect(config, state, token, employeePayload) {
+  const frontendBase = (state || config.frontendBaseUrl || '').replace(/\/$/, '');
+  const qs = `token=${encodeURIComponent(token)}&employee=${encodeURIComponent(JSON.stringify(employeePayload))}`;
+  return frontendBase ? `${frontendBase}/employee/callback?${qs}` : `/employee/callback?${qs}`;
+}
+
+function resolveRedirectUri(config, req, provider) {
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  if (config.redirectUri?.trim()) return config.redirectUri.trim();
+  return `${baseUrl}/api/employee-auth/sso/${encodeURIComponent(provider)}/callback`;
+}
+
+async function resolveOidcEndpoints(config) {
+  const scopes = (config.scopes || 'openid email profile').trim() || 'openid email profile';
+
+  if (config.discoveryUrl?.trim()) {
+    try {
+      const res = await fetch(config.discoveryUrl.trim());
+      if (res.ok) {
+        const disc = await res.json();
+        return {
+          authorizationUrl: config.authorizationUrl?.trim() || disc.authorization_endpoint,
+          tokenUrl: config.tokenUrl?.trim() || disc.token_endpoint,
+          userInfoUrl: config.userInfoUrl?.trim() || disc.userinfo_endpoint,
+          scopes,
+        };
+      }
+    } catch (e) {
+      console.error('OIDC discovery error:', e?.message || e);
+    }
+  }
+
+  return {
+    authorizationUrl: config.authorizationUrl?.trim() || null,
+    tokenUrl: config.tokenUrl?.trim() || null,
+    userInfoUrl: config.userInfoUrl?.trim() || null,
+    scopes,
+  };
+}
+
+function extractEmailFromProfile(profile) {
+  const candidates = [
+    profile?.email,
+    profile?.preferred_username,
+    profile?.upn,
+    profile?.mail,
+  ];
+  for (const value of candidates) {
+    const email = String(value || '').toLowerCase().trim();
+    if (email.includes('@')) return email;
+  }
+  return null;
+}
+
+async function loadSsoProvider(providerSlug) {
+  const { SsoConfig } = await import('../models/index.js');
+  const provider = String(providerSlug || '').trim().toLowerCase();
+  if (!provider) return null;
+  const config = await SsoConfig.findOne({
+    where: { provider, [Op.or]: [{ isActive: true }, { isActive: null }] },
+  });
+  return config;
+}
+
+/** Public list of active SSO providers for employee login page */
+export async function listPublicSsoProviders(_req, res) {
   try {
     const { SsoConfig } = await import('../models/index.js');
-    const config = await SsoConfig.findOne({ where: { provider: 'google' } });
+    const rows = await SsoConfig.findAll({
+      where: {
+        [Op.or]: [{ isActive: true }, { isActive: null }],
+        clientId: { [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: '' }] },
+      },
+      order: [
+        ['sortOrder', 'ASC'],
+        ['displayName', 'ASC'],
+        ['provider', 'ASC'],
+      ],
+      attributes: ['provider', 'displayName', 'iconUrl', 'sortOrder'],
+    });
+    return res.json(rows);
+  } catch (error) {
+    console.error('listPublicSsoProviders error:', error);
+    return res.status(500).json({ message: 'Failed to load SSO providers' });
+  }
+}
+
+/** Generic OIDC redirect for any configured provider */
+export async function ssoRedirect(req, res) {
+  try {
+    const provider = String(req.params.provider || '').trim().toLowerCase();
+    const config = await loadSsoProvider(provider);
     if (!config?.clientId) {
-      return res.status(400).json({ message: 'Google SSO is not configured. Contact admin.' });
+      return res.status(400).json({ message: `${provider || 'SSO'} is not configured. Contact admin.` });
     }
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const redirectUri = (config.redirectUri && config.redirectUri.trim())
-      ? config.redirectUri.trim()
-      : `${baseUrl}/api/employee-auth/google/callback`;
+
+    const endpoints = await resolveOidcEndpoints(config);
+    if (!endpoints.authorizationUrl) {
+      return res.status(400).json({ message: 'SSO authorization URL is not configured. Contact admin.' });
+    }
+
+    const redirectUri = resolveRedirectUri(config, req, provider);
     const state = (req.query.state || config.frontendBaseUrl || '').toString().replace(/\/$/, '');
     const params = new URLSearchParams({
       client_id: config.clientId,
       redirect_uri: redirectUri,
       response_type: 'code',
-      scope: 'openid email profile',
-      access_type: 'offline',
-      prompt: 'select_account',
+      scope: endpoints.scopes,
       ...(state ? { state } : {}),
     });
-    return res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+
+    return res.redirect(`${endpoints.authorizationUrl}?${params.toString()}`);
   } catch (error) {
-    console.error('Google redirect error:', error);
+    console.error('SSO redirect error:', error);
     return res.status(500).json({ message: 'SSO not available' });
   }
 }
 
-// Google SSO: callback – exchange code, get email, find employee, issue JWT, redirect to frontend
-export async function googleCallback(req, res) {
+/** Generic OIDC callback – exchange code, fetch profile, issue employee JWT */
+export async function ssoCallback(req, res) {
   const { code, state } = req.query;
+  const provider = String(req.params.provider || '').trim().toLowerCase();
   if (!code) {
-    return res.redirect(state ? `${state}/employee/login?error=no_code` : '/employee/login?error=no_code');
+    return res.redirect(loginErrorRedirect(state, 'no_code'));
   }
+
   try {
     const { SsoConfig, Employee } = await import('../models/index.js');
-    const config = await SsoConfig.findOne({ where: { provider: 'google' } });
+    const config = await SsoConfig.findOne({
+    where: { provider, [Op.or]: [{ isActive: true }, { isActive: null }] },
+  });
     if (!config?.clientId || !config.clientSecret) {
-      return res.redirect(state ? `${state}/employee/login?error=not_configured` : '/employee/login?error=not_configured');
+      return res.redirect(loginErrorRedirect(state, 'not_configured'));
     }
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const redirectUri = (config.redirectUri && config.redirectUri.trim())
-      ? config.redirectUri.trim()
-      : `${baseUrl}/api/employee-auth/google/callback`;
 
-    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+    const endpoints = await resolveOidcEndpoints(config);
+    if (!endpoints.tokenUrl || !endpoints.userInfoUrl) {
+      return res.redirect(loginErrorRedirect(state, 'not_configured'));
+    }
+
+    const redirectUri = resolveRedirectUri(config, req, provider);
+    const tokenRes = await fetch(endpoints.tokenUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -252,22 +352,25 @@ export async function googleCallback(req, res) {
         grant_type: 'authorization_code',
       }),
     });
+
     if (!tokenRes.ok) {
       const err = await tokenRes.text();
-      console.error('Google token error:', err);
-      return res.redirect(state ? `${state}/employee/login?error=token_failed` : '/employee/login?error=token_failed');
+      console.error(`${provider} token error:`, err);
+      return res.redirect(loginErrorRedirect(state, 'token_failed'));
     }
+
     const tokens = await tokenRes.json();
-    const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+    const userRes = await fetch(endpoints.userInfoUrl, {
       headers: { Authorization: `Bearer ${tokens.access_token}` },
     });
     if (!userRes.ok) {
-      return res.redirect(state ? `${state}/employee/login?error=profile_failed` : '/employee/login?error=profile_failed');
+      return res.redirect(loginErrorRedirect(state, 'profile_failed'));
     }
+
     const profile = await userRes.json();
-    const email = (profile.email || '').toLowerCase().trim();
+    const email = extractEmailFromProfile(profile);
     if (!email) {
-      return res.redirect(state ? `${state}/employee/login?error=no_email` : '/employee/login?error=no_email');
+      return res.redirect(loginErrorRedirect(state, 'no_email'));
     }
 
     const employee = await Employee.findOne({
@@ -275,10 +378,9 @@ export async function googleCallback(req, res) {
       attributes: ['id', 'employeeId', 'employeeName', 'companyName', 'entity', 'email'],
     });
     if (!employee) {
-      return res.redirect(state ? `${state}/employee/login?error=employee_not_found` : '/employee/login?error=employee_not_found');
+      return res.redirect(loginErrorRedirect(state, 'employee_not_found'));
     }
 
-    const signToken = (await import('../middleware/auth.js')).signToken;
     const token = signToken({
       role: 'employee',
       employeeId: employee.employeeId,
@@ -291,15 +393,11 @@ export async function googleCallback(req, res) {
       companyName: employee.companyName,
       entity: employee.entity,
     };
-    const frontendBase = (state || config.frontendBaseUrl || '').replace(/\/$/, '');
-    const target = frontendBase
-      ? `${frontendBase}/employee/callback?token=${encodeURIComponent(token)}&employee=${encodeURIComponent(JSON.stringify(employeePayload))}`
-      : `/employee/callback?token=${encodeURIComponent(token)}&employee=${encodeURIComponent(JSON.stringify(employeePayload))}`;
-    return res.redirect(target);
+
+    return res.redirect(buildCallbackRedirect(config, state, token, employeePayload));
   } catch (error) {
-    console.error('Google callback error:', error);
-    const state = req.query.state || '';
-    return res.redirect(state ? `${state}/employee/login?error=login_failed` : '/employee/login?error=login_failed');
+    console.error(`${provider} callback error:`, error);
+    return res.redirect(loginErrorRedirect(req.query.state, 'login_failed'));
   }
 }
 

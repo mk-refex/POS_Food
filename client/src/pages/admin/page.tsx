@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import Layout from '../../components/feature/Layout';
 import Pagination from '../../components/Pagination';
 import { apiFetch, isAdmin, mastersApi } from '../../api/client';
@@ -39,6 +40,42 @@ interface HrmsConfig {
   createdAt: string;
   updatedAt: string;
 }
+
+interface SsoProvider {
+  id: number;
+  provider: string;
+  displayName?: string | null;
+  iconUrl?: string | null;
+  sortOrder: number;
+  isActive: boolean;
+  clientId?: string;
+  clientSecret?: string;
+  hasClientSecret?: boolean;
+  redirectUri?: string | null;
+  frontendBaseUrl?: string | null;
+  authorizationUrl?: string | null;
+  tokenUrl?: string | null;
+  userInfoUrl?: string | null;
+  discoveryUrl?: string | null;
+  scopes?: string | null;
+}
+
+const emptySsoForm = {
+  provider: '',
+  displayName: '',
+  iconUrl: '',
+  sortOrder: 0,
+  isActive: true,
+  clientId: '',
+  clientSecret: '',
+  redirectUri: '',
+  frontendBaseUrl: '',
+  authorizationUrl: '',
+  tokenUrl: '',
+  userInfoUrl: '',
+  discoveryUrl: '',
+  scopes: 'openid email profile',
+};
 
 export default function AdminPanel() {
   const [activeTab, setActiveTab] = useState<'users' | 'api' | 'sso' | 'smtp'>('users');
@@ -87,14 +124,10 @@ export default function AdminPanel() {
     headersJson: ''
   });
 
-  // SSO Config – all fields from sso_config table
-  const [ssoConfig, setSsoConfig] = useState({
-    provider: 'google',
-    clientId: '',
-    clientSecret: '',
-    redirectUri: '',
-    frontendBaseUrl: ''
-  });
+  // SSO providers
+  const [ssoProviders, setSsoProviders] = useState<SsoProvider[]>([]);
+  const [showSsoForm, setShowSsoForm] = useState(false);
+  const [ssoForm, setSsoForm] = useState(emptySsoForm);
   const [ssoSaving, setSsoSaving] = useState(false);
 
   // SMTP Config
@@ -140,30 +173,21 @@ export default function AdminPanel() {
     if (activeTab === 'api') loadApi();
   }, [activeTab]);
 
-  // Load SSO config when tab is "sso"
+  const loadSsoProviders = async () => {
+    try {
+      const rows = await mastersApi.listSsoProviders();
+      setSsoProviders(Array.isArray(rows) ? rows : []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load SSO providers');
+      setSsoProviders([]);
+    }
+  };
+
+  // Load SSO providers when tab is "sso"
   useEffect(() => {
     if (activeTab !== 'sso') return;
-    setError(''); // clear previous error when opening SSO tab
-    const loadSso = async () => {
-      try {
-        const cfg = await mastersApi.getSsoConfig();
-        if (cfg) {
-          setSsoConfig({
-            provider: cfg.provider || 'google',
-            clientId: cfg.clientId || '',
-            clientSecret: '', // never show masked value in form
-            redirectUri: cfg.redirectUri || '',
-            frontendBaseUrl: cfg.frontendBaseUrl || ''
-          });
-        } else {
-          setSsoConfig({ provider: 'google', clientId: '', clientSecret: '', redirectUri: '', frontendBaseUrl: '' });
-        }
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to load SSO config');
-        setSsoConfig({ provider: 'google', clientId: '', clientSecret: '', redirectUri: '', frontendBaseUrl: '' });
-      }
-    };
-    loadSso();
+    setError('');
+    loadSsoProviders();
   }, [activeTab]);
 
   // Load SMTP config when tab is "smtp"
@@ -310,19 +334,24 @@ export default function AdminPanel() {
   // HRMS removed
   // const handleHrmsSubmit = async (e: React.FormEvent) => { /* removed */ };
 
-  const handleDelete = async (type: 'user', id: number) => {
+  const handleDelete = async (type: 'user' | 'sso', id: number) => {
     if (!confirm('Are you sure you want to delete this item?')) return;
     
     try {
       setLoading(true);
       setError('');
       
-      await apiFetch(`/admin/${type + 's'}/${id}`, {
-        method: 'DELETE'
-      });
-      
-      setSuccess(`${type.charAt(0).toUpperCase() + type.slice(1)} deleted successfully`);
-      loadData();
+      if (type === 'sso') {
+        await mastersApi.deleteSsoProvider(id);
+        setSuccess('SSO provider deleted successfully');
+        await loadSsoProviders();
+      } else {
+        await apiFetch(`/admin/${type + 's'}/${id}`, {
+          method: 'DELETE'
+        });
+        setSuccess(`${type.charAt(0).toUpperCase() + type.slice(1)} deleted successfully`);
+        loadData();
+      }
     } catch (err: any) {
       setError(err.message || `Failed to delete ${type}`);
     } finally {
@@ -332,6 +361,68 @@ export default function AdminPanel() {
 
   // HRMS removed
   // const handleTestConnection = async (id: number) => { /* removed */ };
+
+  const editSsoProvider = (item: SsoProvider) => {
+    setEditingItem(item);
+    setSsoForm({
+      provider: item.provider || '',
+      displayName: item.displayName || '',
+      iconUrl: item.iconUrl || '',
+      sortOrder: item.sortOrder ?? 0,
+      isActive: item.isActive !== false,
+      clientId: item.clientId || '',
+      clientSecret: '',
+      redirectUri: item.redirectUri || '',
+      frontendBaseUrl: item.frontendBaseUrl || '',
+      authorizationUrl: item.authorizationUrl || '',
+      tokenUrl: item.tokenUrl || '',
+      userInfoUrl: item.userInfoUrl || '',
+      discoveryUrl: item.discoveryUrl || '',
+      scopes: item.scopes || 'openid email profile',
+    });
+    setShowSsoForm(true);
+  };
+
+  const handleSsoSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setSsoSaving(true);
+      setError('');
+      setSuccess('');
+      const payload: Record<string, unknown> = {
+        provider: ssoForm.provider.trim(),
+        displayName: ssoForm.displayName.trim() || ssoForm.provider.trim(),
+        iconUrl: ssoForm.iconUrl.trim() || null,
+        sortOrder: Number(ssoForm.sortOrder) || 0,
+        isActive: ssoForm.isActive,
+        clientId: ssoForm.clientId.trim(),
+        redirectUri: ssoForm.redirectUri.trim() || null,
+        frontendBaseUrl: ssoForm.frontendBaseUrl.trim() || null,
+        authorizationUrl: ssoForm.authorizationUrl.trim() || null,
+        tokenUrl: ssoForm.tokenUrl.trim() || null,
+        userInfoUrl: ssoForm.userInfoUrl.trim() || null,
+        discoveryUrl: ssoForm.discoveryUrl.trim() || null,
+        scopes: ssoForm.scopes.trim() || 'openid email profile',
+      };
+      if (ssoForm.clientSecret.trim()) {
+        payload.clientSecret = ssoForm.clientSecret.trim();
+      }
+      if (editingItem?.id) {
+        await mastersApi.updateSsoProvider(editingItem.id, payload);
+        setSuccess('SSO provider updated');
+      } else {
+        await mastersApi.createSsoProvider(payload);
+        setSuccess('SSO provider created');
+      }
+      setShowSsoForm(false);
+      setEditingItem(null);
+      await loadSsoProviders();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to save SSO provider');
+    } finally {
+      setSsoSaving(false);
+    }
+  };
 
   const editItem = (item: any, type: 'user') => {
     setEditingItem(item);
@@ -574,117 +665,90 @@ export default function AdminPanel() {
         {activeTab === 'sso' && (
           <div className="space-y-6">
             <div className="flex justify-between items-center">
-              <h2 className="text-xl font-semibold text-gray-900">SSO Configuration (Google)</h2>
+              <h2 className="text-xl font-semibold text-gray-900">SSO Providers</h2>
+              <button
+                onClick={() => {
+                  setEditingItem(null);
+                  setSsoForm(emptySsoForm);
+                  setShowSsoForm(true);
+                }}
+                className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors"
+              >
+                <i className="ri-add-line mr-2"></i>
+                Add Provider
+              </button>
             </div>
             <p className="text-sm text-gray-600">
-              Configure Google Sign-In for the employee portal. Employees sign in with their Google account; their email must match an active employee record.
+              Add OIDC providers for the employee login page. Set a Discovery URL or the Authorization, Token, and UserInfo URLs.
+              Redirect URI must be your API callback, e.g.{' '}
+              <code className="text-xs bg-gray-100 px-1 rounded">https://your-api.com/api/employee-auth/sso/refex-one/callback</code>.
+              Lower sort order appears first on the login page.
             </p>
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-              <div className="p-6 space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Provider</label>
-                    <input
-                      type="text"
-                      value={ssoConfig.provider}
-                      onChange={(e) => setSsoConfig({ ...ssoConfig, provider: e.target.value })}
-                      placeholder="google"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
-                    />
-                    <p className="mt-1 text-xs text-gray-500">e.g. google – must match OAuth provider.</p>
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Client ID</label>
-                    <input
-                      type="text"
-                      value={ssoConfig.clientId}
-                      onChange={(e) => setSsoConfig({ ...ssoConfig, clientId: e.target.value })}
-                      placeholder="xxxxx.apps.googleusercontent.com"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
-                    />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Client Secret</label>
-                    <input
-                      type="password"
-                      value={ssoConfig.clientSecret}
-                      onChange={(e) => setSsoConfig({ ...ssoConfig, clientSecret: e.target.value })}
-                      placeholder="Leave blank to keep existing"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
-                    />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Redirect URI</label>
-                    <input
-                      type="url"
-                      value={ssoConfig.redirectUri}
-                      onChange={(e) => setSsoConfig({ ...ssoConfig, redirectUri: e.target.value })}
-                      placeholder="https://api.example.com/api/employee-auth/google/callback"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
-                    />
-                    <p className="mt-1 text-xs text-gray-500">Must match the redirect URI configured in Google Cloud Console.</p>
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Frontend base URL</label>
-                    <input
-                      type="url"
-                      value={ssoConfig.frontendBaseUrl}
-                      onChange={(e) => setSsoConfig({ ...ssoConfig, frontendBaseUrl: e.target.value })}
-                      placeholder="https://your-app.example.com"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
-                    />
-                    <p className="mt-1 text-xs text-gray-500">Used for redirect after Google sign-in. Defaults to request origin if empty.</p>
-                  </div>
-                </div>
-                <div className="flex justify-end items-center gap-4 pt-4">
-                  {activeTab === 'sso' && error && (
-                    <span className="text-red-600 text-sm flex-1">{error}</span>
-                  )}
-                  <button
-                    type="button"
-                    disabled={ssoSaving}
-                    onClick={async () => {
-                      try {
-                        setSsoSaving(true);
-                        setError('');
-                        setSuccess('');
-                        const provider = (ssoConfig.provider || 'google').trim() || 'google';
-                        const clientId = (ssoConfig.clientId || '').trim();
-                        const clientSecret = ssoConfig.clientSecret?.trim();
-                        const redirectUri = (ssoConfig.redirectUri || '').trim() || null;
-                        const frontendBaseUrl = (ssoConfig.frontendBaseUrl || '').trim() || null;
-                        const payload: Record<string, string | null> = {
-                          provider,
-                          clientId,
-                          redirectUri,
-                          frontendBaseUrl
-                        };
-                        if (clientSecret !== undefined && clientSecret !== '') {
-                          payload.clientSecret = clientSecret;
-                        }
-                        await mastersApi.updateSsoConfig(payload);
-                        setSuccess('SSO configuration saved');
-                        const cfg = await mastersApi.getSsoConfig();
-                        if (cfg) {
-                          setSsoConfig({
-                            provider: cfg.provider || 'google',
-                            clientId: cfg.clientId || '',
-                            clientSecret: '',
-                            redirectUri: cfg.redirectUri || '',
-                            frontendBaseUrl: cfg.frontendBaseUrl || ''
-                          });
-                        }
-                      } catch (err: any) {
-                        setError(err?.message || 'Failed to save SSO config');
-                      } finally {
-                        setSsoSaving(false);
-                      }
-                    }}
-                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
-                  >
-                    {ssoSaving ? 'Saving...' : 'Save SSO Config'}
-                  </button>
-                </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Order</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Icon</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Slug</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {ssoProviders.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="px-6 py-8 text-center text-sm text-gray-500">
+                          No SSO providers configured yet.
+                        </td>
+                      </tr>
+                    ) : (
+                      ssoProviders.map((provider) => (
+                        <tr key={provider.id}>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{provider.sortOrder ?? 0}</td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            {provider.iconUrl ? (
+                              <img src={provider.iconUrl} alt="" className="h-6 w-6 object-contain" />
+                            ) : (
+                              <span className="text-xs text-gray-400">—</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {provider.displayName || provider.provider}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{provider.provider}</td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                              provider.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                            }`}>
+                              {provider.isActive ? 'Active' : 'Inactive'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                            <div className="flex space-x-2">
+                              <button
+                                onClick={() => editSsoProvider(provider)}
+                                className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg"
+                                title="Edit provider"
+                              >
+                                <i className="ri-edit-line"></i>
+                              </button>
+                              <button
+                                onClick={() => handleDelete('sso', provider.id)}
+                                className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
+                                title="Delete provider"
+                              >
+                                <i className="ri-delete-bin-line"></i>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
@@ -870,6 +934,205 @@ export default function AdminPanel() {
             </div>
           </div>
         )}
+
+        {showSsoForm &&
+          createPortal(
+            <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+              <button
+                type="button"
+                aria-label="Close"
+                className="absolute inset-0 bg-black/50"
+                onClick={() => {
+                  setShowSsoForm(false);
+                  setEditingItem(null);
+                }}
+              />
+              <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[min(90vh,820px)] flex flex-col">
+                <div className="flex-shrink-0 px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                  <h2 className="text-lg font-semibold text-gray-900">
+                    {editingItem ? 'Edit SSO Provider' : 'Add SSO Provider'}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowSsoForm(false);
+                      setEditingItem(null);
+                    }}
+                    className="p-2 rounded-lg text-gray-500 hover:bg-gray-100"
+                    aria-label="Close dialog"
+                  >
+                    <i className="ri-close-line text-xl" />
+                  </button>
+                </div>
+                <form onSubmit={handleSsoSubmit} className="flex flex-col flex-1 min-h-0">
+                  <div className="flex-1 overflow-y-auto px-6 py-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Provider slug *</label>
+                        <input
+                          type="text"
+                          value={ssoForm.provider}
+                          onChange={(e) => setSsoForm({ ...ssoForm, provider: e.target.value })}
+                          placeholder="refex-one"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                          required
+                          disabled={Boolean(editingItem)}
+                        />
+                        <p className="mt-1 text-xs text-gray-500">Used in login URL.</p>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Display name *</label>
+                        <input
+                          type="text"
+                          value={ssoForm.displayName}
+                          onChange={(e) => setSsoForm({ ...ssoForm, displayName: e.target.value })}
+                          placeholder="Refex One"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Sort order</label>
+                        <input
+                          type="number"
+                          value={ssoForm.sortOrder}
+                          onChange={(e) => setSsoForm({ ...ssoForm, sortOrder: Number(e.target.value) || 0 })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                        />
+                      </div>
+                      <div className="flex items-center pt-7">
+                        <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                          <input
+                            type="checkbox"
+                            checked={ssoForm.isActive}
+                            onChange={(e) => setSsoForm({ ...ssoForm, isActive: e.target.checked })}
+                          />
+                          Active on login page
+                        </label>
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Icon URL</label>
+                        <input
+                          type="url"
+                          value={ssoForm.iconUrl}
+                          onChange={(e) => setSsoForm({ ...ssoForm, iconUrl: e.target.value })}
+                          placeholder="https://example.com/icon.png"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Client ID *</label>
+                        <input
+                          type="text"
+                          value={ssoForm.clientId}
+                          onChange={(e) => setSsoForm({ ...ssoForm, clientId: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                          required
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Client Secret</label>
+                        <input
+                          type="password"
+                          value={ssoForm.clientSecret}
+                          onChange={(e) => setSsoForm({ ...ssoForm, clientSecret: e.target.value })}
+                          placeholder={editingItem ? 'Leave blank to keep existing' : ''}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                          required={!editingItem}
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Redirect URI</label>
+                        <input
+                          type="url"
+                          value={ssoForm.redirectUri}
+                          onChange={(e) => setSsoForm({ ...ssoForm, redirectUri: e.target.value })}
+                          placeholder="https://your-api.com/api/employee-auth/sso/refex-one/callback"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Frontend base URL</label>
+                        <input
+                          type="url"
+                          value={ssoForm.frontendBaseUrl}
+                          onChange={(e) => setSsoForm({ ...ssoForm, frontendBaseUrl: e.target.value })}
+                          placeholder="https://canteen.refex.group"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Discovery URL</label>
+                        <input
+                          type="url"
+                          value={ssoForm.discoveryUrl}
+                          onChange={(e) => setSsoForm({ ...ssoForm, discoveryUrl: e.target.value })}
+                          placeholder="https://provider.com/.well-known/openid-configuration"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Authorization URL</label>
+                        <input
+                          type="url"
+                          value={ssoForm.authorizationUrl}
+                          onChange={(e) => setSsoForm({ ...ssoForm, authorizationUrl: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Token URL</label>
+                        <input
+                          type="url"
+                          value={ssoForm.tokenUrl}
+                          onChange={(e) => setSsoForm({ ...ssoForm, tokenUrl: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">UserInfo URL</label>
+                        <input
+                          type="url"
+                          value={ssoForm.userInfoUrl}
+                          onChange={(e) => setSsoForm({ ...ssoForm, userInfoUrl: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Scopes</label>
+                        <input
+                          type="text"
+                          value={ssoForm.scopes}
+                          onChange={(e) => setSsoForm({ ...ssoForm, scopes: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-xl flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowSsoForm(false);
+                        setEditingItem(null);
+                      }}
+                      className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-white transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={ssoSaving}
+                      className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                    >
+                      {ssoSaving ? 'Saving...' : editingItem ? 'Update' : 'Create'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>,
+            document.body,
+          )}
 
         {/* User Form Modal */}
         {showUserForm && (

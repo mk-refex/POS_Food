@@ -192,56 +192,139 @@ export async function upsertApiConfig(req, res) {
   }
 }
 
-// SSO Config (Google) – get/upsert for employee login
-export async function getSsoConfig(req, res) {
+// SSO Config – multi-provider CRUD for employee login
+function maskSsoProvider(config) {
+  const json = config.toJSON();
+  if (json.clientSecret) json.clientSecret = '••••••';
+  json.hasClientSecret = Boolean(config.clientSecret);
+  return json;
+}
+
+function normalizeProviderSlug(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function buildSsoPayload(body, { requireProvider = false } = {}) {
+  const provider = normalizeProviderSlug(body.provider);
+  if (requireProvider && !provider) {
+    throw new Error('Provider slug is required (e.g. google, refex-one)');
+  }
+
+  const payload = {};
+  if (body.provider !== undefined) payload.provider = provider;
+  if (body.displayName !== undefined) payload.displayName = String(body.displayName || '').trim() || null;
+  if (body.iconUrl !== undefined) payload.iconUrl = String(body.iconUrl || '').trim() || null;
+  if (body.sortOrder !== undefined) payload.sortOrder = Number(body.sortOrder) || 0;
+  if (body.isActive !== undefined) payload.isActive = Boolean(body.isActive);
+  if (body.clientId !== undefined) payload.clientId = body.clientId == null ? '' : String(body.clientId);
+  if (body.redirectUri !== undefined) {
+    payload.redirectUri = String(body.redirectUri || '').trim() || null;
+  }
+  if (body.frontendBaseUrl !== undefined) {
+    payload.frontendBaseUrl = String(body.frontendBaseUrl || '').trim() || null;
+  }
+  if (body.authorizationUrl !== undefined) {
+    payload.authorizationUrl = String(body.authorizationUrl || '').trim() || null;
+  }
+  if (body.tokenUrl !== undefined) payload.tokenUrl = String(body.tokenUrl || '').trim() || null;
+  if (body.userInfoUrl !== undefined) payload.userInfoUrl = String(body.userInfoUrl || '').trim() || null;
+  if (body.discoveryUrl !== undefined) payload.discoveryUrl = String(body.discoveryUrl || '').trim() || null;
+  if (body.scopes !== undefined) {
+    payload.scopes = String(body.scopes || '').trim() || 'openid email profile';
+  }
+  if (
+    body.clientSecret !== undefined &&
+    body.clientSecret !== '' &&
+    body.clientSecret !== '••••••'
+  ) {
+    payload.clientSecret = String(body.clientSecret);
+  }
+  return payload;
+}
+
+export async function listSsoProviders(req, res) {
   try {
-    const config = await SsoConfig.findOne({ where: { provider: 'google' } });
-    if (!config) {
-      return res.json(null);
-    }
-    const json = config.toJSON();
-    // Don't send full secret to client; indicate if set
-    if (json.clientSecret) {
-      json.clientSecret = '••••••';
-    }
-    return res.json(json);
+    const rows = await SsoConfig.findAll({
+      order: [
+        ['sortOrder', 'ASC'],
+        ['displayName', 'ASC'],
+        ['provider', 'ASC'],
+      ],
+    });
+    return res.json(rows.map(maskSsoProvider));
   } catch (e) {
-    return res.status(500).json({ message: 'Failed to fetch SSO config', error: e.message });
+    return res.status(500).json({ message: 'Failed to fetch SSO providers', error: e.message });
   }
 }
 
-export async function upsertSsoConfig(req, res) {
+export async function createSsoProvider(req, res) {
   try {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
-    const { provider, clientId, clientSecret, redirectUri, frontendBaseUrl } = body;
-    const effectiveProvider = (String(provider || 'google').trim()) || 'google';
-    let config = await SsoConfig.findOne({ where: { provider: effectiveProvider } });
-    if (!config) {
-      config = await SsoConfig.create({
-        provider: effectiveProvider,
-        clientId: clientId != null ? String(clientId) : '',
-        clientSecret: clientSecret != null ? String(clientSecret) : '',
-        redirectUri: (redirectUri != null && String(redirectUri).trim()) ? String(redirectUri).trim() : null,
-        frontendBaseUrl: (frontendBaseUrl != null && String(frontendBaseUrl).trim()) ? String(frontendBaseUrl).trim() : null,
-      });
-    } else {
-      const updates = {
-        clientId: clientId !== undefined ? (clientId == null ? '' : String(clientId)) : config.clientId,
-        redirectUri: redirectUri !== undefined ? ((redirectUri == null || String(redirectUri).trim() === '') ? null : String(redirectUri).trim()) : config.redirectUri,
-        frontendBaseUrl: frontendBaseUrl !== undefined ? ((frontendBaseUrl == null || String(frontendBaseUrl).trim() === '') ? null : String(frontendBaseUrl).trim()) : config.frontendBaseUrl,
-      };
-      if (clientSecret !== undefined && clientSecret !== '' && clientSecret !== '••••••') {
-        updates.clientSecret = String(clientSecret);
-      }
-      await config.update(updates);
+    const payload = buildSsoPayload(body, { requireProvider: true });
+    if (!payload.provider) {
+      return res.status(400).json({ message: 'Provider slug is required' });
     }
-    await config.reload();
-    const json = config.toJSON();
-    if (json.clientSecret) json.clientSecret = '••••••';
-    return res.json(json);
+    const existing = await SsoConfig.findOne({ where: { provider: payload.provider } });
+    if (existing) {
+      return res.status(409).json({ message: 'Provider slug already exists' });
+    }
+    const config = await SsoConfig.create({
+      provider: payload.provider,
+      displayName: payload.displayName ?? payload.provider,
+      iconUrl: payload.iconUrl ?? null,
+      sortOrder: payload.sortOrder ?? 0,
+      isActive: payload.isActive ?? true,
+      clientId: payload.clientId ?? '',
+      clientSecret: payload.clientSecret ?? '',
+      redirectUri: payload.redirectUri ?? null,
+      frontendBaseUrl: payload.frontendBaseUrl ?? null,
+      authorizationUrl: payload.authorizationUrl ?? null,
+      tokenUrl: payload.tokenUrl ?? null,
+      userInfoUrl: payload.userInfoUrl ?? null,
+      discoveryUrl: payload.discoveryUrl ?? null,
+      scopes: payload.scopes ?? 'openid email profile',
+    });
+    return res.status(201).json(maskSsoProvider(config));
   } catch (e) {
-    console.error('SSO config save error:', e);
-    return res.status(500).json({ message: e.message || 'Failed to save SSO config', error: e.message });
+    console.error('SSO provider create error:', e);
+    return res.status(500).json({ message: e.message || 'Failed to create SSO provider', error: e.message });
+  }
+}
+
+export async function updateSsoProvider(req, res) {
+  try {
+    const { id } = req.params;
+    const config = await SsoConfig.findByPk(id);
+    if (!config) return res.status(404).json({ message: 'SSO provider not found' });
+
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const payload = buildSsoPayload(body);
+    if (payload.provider && payload.provider !== config.provider) {
+      const clash = await SsoConfig.findOne({ where: { provider: payload.provider } });
+      if (clash) return res.status(409).json({ message: 'Provider slug already exists' });
+    }
+    await config.update(payload);
+    await config.reload();
+    return res.json(maskSsoProvider(config));
+  } catch (e) {
+    console.error('SSO provider update error:', e);
+    return res.status(500).json({ message: e.message || 'Failed to update SSO provider', error: e.message });
+  }
+}
+
+export async function deleteSsoProvider(req, res) {
+  try {
+    const { id } = req.params;
+    const config = await SsoConfig.findByPk(id);
+    if (!config) return res.status(404).json({ message: 'SSO provider not found' });
+    await config.destroy();
+    return res.json({ message: 'SSO provider deleted' });
+  } catch (e) {
+    return res.status(500).json({ message: 'Failed to delete SSO provider', error: e.message });
   }
 }
 

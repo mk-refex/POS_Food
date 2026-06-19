@@ -11,8 +11,10 @@ import {
   getApiConfig,
   upsertApiConfig,
   // SSO Config
-  getSsoConfig,
-  upsertSsoConfig,
+  listSsoProviders,
+  createSsoProvider,
+  updateSsoProvider,
+  deleteSsoProvider,
   getSmtpConfig,
   upsertSmtpConfig,
   testSmtp,
@@ -39,9 +41,11 @@ router.delete('/users/:id', deleteUser);
 router.get('/api-config', getApiConfig);
 router.put('/api-config', upsertApiConfig);
 
-// SSO Config (Google) for employee login
-router.get('/sso-config', getSsoConfig);
-router.put('/sso-config', upsertSsoConfig);
+// SSO providers for employee login
+router.get('/sso-providers', listSsoProviders);
+router.post('/sso-providers', createSsoProvider);
+router.put('/sso-providers/:id', updateSsoProvider);
+router.delete('/sso-providers/:id', deleteSsoProvider);
 
 // SMTP Config
 router.get('/smtp-config', getSmtpConfig);
