@@ -1,6 +1,5 @@
 import express from "express";
 import cors from "cors";
-import morgan from "morgan";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -36,7 +35,6 @@ app.use((req, res, next) => {
 });
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(morgan("dev"));
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", uptime: process.uptime() });

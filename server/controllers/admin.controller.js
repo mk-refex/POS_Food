@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { Op } from 'sequelize';
-import { User, ApiConfig } from '../models/index.js';
+import { User, ApiConfig, SsoConfig, SmtpConfig } from '../models/index.js';
+import nodemailer from 'nodemailer';
 
 // User Management
 export async function listUsers(req, res) {
@@ -34,10 +35,10 @@ export async function getUserById(req, res) {
 }
 
 const createUserSchema = z.object({
-  username: z.string().min(3).regex(/^[a-zA-Z0-9_.-]+$/).optional(),
-  email: z.string().email(),
+  username: z.string().trim().min(3).regex(/^[a-zA-Z0-9_.-]+$/).optional(),
+  email: z.string().trim().email(),
   password: z.string().min(6),
-  name: z.string().min(1),
+  name: z.string().trim().min(1),
   role: z.enum(['admin', 'user']).optional(),
 });
 
@@ -52,32 +53,35 @@ export async function createUser(req, res) {
     }
     
     const { username, email, password, name, role = 'user' } = parse.data;
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedUsername = username ? username.trim() : null;
+    const normalizedName = name.trim();
     
     // Check if user already exists by email or username
     const existingUser = await User.findOne({ 
       where: { 
         [Op.or]: [
-          { email },
-          ...(username ? [{ username }] : [])
+          { email: normalizedEmail },
+          ...(normalizedUsername ? [{ username: normalizedUsername }] : [])
         ]
       } 
     });
     
     if (existingUser) {
-      if (existingUser.email === email) {
+      if (existingUser.email === normalizedEmail) {
         return res.status(409).json({ message: 'Email already in use' });
       }
-      if (username && existingUser.username === username) {
+      if (normalizedUsername && existingUser.username === normalizedUsername) {
         return res.status(409).json({ message: 'Username already in use' });
       }
     }
     
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await User.create({ 
-      username: username || null,
-      email, 
+      username: normalizedUsername,
+      email: normalizedEmail, 
       passwordHash, 
-      name, 
+      name: normalizedName, 
       role 
     });
     
@@ -90,9 +94,9 @@ export async function createUser(req, res) {
 }
 
 const updateUserSchema = z.object({
-  username: z.string().min(3).regex(/^[a-zA-Z0-9_.-]+$/).optional(),
-  email: z.string().email().optional(),
-  name: z.string().min(1).optional(),
+  username: z.string().trim().min(3).regex(/^[a-zA-Z0-9_.-]+$/).optional(),
+  email: z.string().trim().email().optional(),
+  name: z.string().trim().min(1).optional(),
   role: z.enum(['admin', 'user']).optional(),
   password: z.string().min(6).optional(),
 });
@@ -120,6 +124,16 @@ export async function updateUser(req, res) {
     if (updateData.password) {
       updateData.passwordHash = await bcrypt.hash(updateData.password, 10);
       delete updateData.password;
+    }
+
+    if (updateData.email != null) {
+      updateData.email = updateData.email.trim().toLowerCase();
+    }
+    if (updateData.username != null) {
+      updateData.username = updateData.username.trim();
+    }
+    if (updateData.name != null) {
+      updateData.name = updateData.name.trim();
     }
     
     // Check email and username uniqueness if being updated
@@ -188,6 +202,230 @@ export async function upsertApiConfig(req, res) {
     return res.json(cfg);
   } catch (e) {
     return res.status(500).json({ message: 'Failed to save API config', error: e.message });
+  }
+}
+
+// SSO Config – multi-provider CRUD for employee login
+function maskSsoProvider(config) {
+  const json = config.toJSON();
+  if (json.clientSecret) json.clientSecret = '••••••';
+  json.hasClientSecret = Boolean(config.clientSecret);
+  return json;
+}
+
+function normalizeProviderSlug(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function buildSsoPayload(body, { requireProvider = false } = {}) {
+  const provider = normalizeProviderSlug(body.provider);
+  if (requireProvider && !provider) {
+    throw new Error('Provider slug is required (e.g. google, refex-one)');
+  }
+
+  const payload = {};
+  if (body.provider !== undefined) payload.provider = provider;
+  if (body.displayName !== undefined) payload.displayName = String(body.displayName || '').trim() || null;
+  if (body.iconUrl !== undefined) payload.iconUrl = String(body.iconUrl || '').trim() || null;
+  if (body.sortOrder !== undefined) payload.sortOrder = Number(body.sortOrder) || 0;
+  if (body.isActive !== undefined) payload.isActive = Boolean(body.isActive);
+  if (body.clientId !== undefined) payload.clientId = body.clientId == null ? '' : String(body.clientId);
+  if (body.redirectUri !== undefined) {
+    payload.redirectUri = String(body.redirectUri || '').trim() || null;
+  }
+  if (body.frontendBaseUrl !== undefined) {
+    payload.frontendBaseUrl = String(body.frontendBaseUrl || '').trim() || null;
+  }
+  if (body.authorizationUrl !== undefined) {
+    payload.authorizationUrl = String(body.authorizationUrl || '').trim() || null;
+  }
+  if (body.tokenUrl !== undefined) payload.tokenUrl = String(body.tokenUrl || '').trim() || null;
+  if (body.userInfoUrl !== undefined) payload.userInfoUrl = String(body.userInfoUrl || '').trim() || null;
+  if (body.discoveryUrl !== undefined) payload.discoveryUrl = String(body.discoveryUrl || '').trim() || null;
+  if (body.scopes !== undefined) {
+    payload.scopes = String(body.scopes || '').trim() || 'openid email profile';
+  }
+  if (
+    body.clientSecret !== undefined &&
+    body.clientSecret !== '' &&
+    body.clientSecret !== '••••••'
+  ) {
+    payload.clientSecret = String(body.clientSecret);
+  }
+  return payload;
+}
+
+export async function listSsoProviders(req, res) {
+  try {
+    const rows = await SsoConfig.findAll({
+      order: [
+        ['sortOrder', 'ASC'],
+        ['displayName', 'ASC'],
+        ['provider', 'ASC'],
+      ],
+    });
+    return res.json(rows.map(maskSsoProvider));
+  } catch (e) {
+    return res.status(500).json({ message: 'Failed to fetch SSO providers', error: e.message });
+  }
+}
+
+export async function createSsoProvider(req, res) {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const payload = buildSsoPayload(body, { requireProvider: true });
+    if (!payload.provider) {
+      return res.status(400).json({ message: 'Provider slug is required' });
+    }
+    const existing = await SsoConfig.findOne({ where: { provider: payload.provider } });
+    if (existing) {
+      return res.status(409).json({ message: 'Provider slug already exists' });
+    }
+    const config = await SsoConfig.create({
+      provider: payload.provider,
+      displayName: payload.displayName ?? payload.provider,
+      iconUrl: payload.iconUrl ?? null,
+      sortOrder: payload.sortOrder ?? 0,
+      isActive: payload.isActive ?? true,
+      clientId: payload.clientId ?? '',
+      clientSecret: payload.clientSecret ?? '',
+      redirectUri: payload.redirectUri ?? null,
+      frontendBaseUrl: payload.frontendBaseUrl ?? null,
+      authorizationUrl: payload.authorizationUrl ?? null,
+      tokenUrl: payload.tokenUrl ?? null,
+      userInfoUrl: payload.userInfoUrl ?? null,
+      discoveryUrl: payload.discoveryUrl ?? null,
+      scopes: payload.scopes ?? 'openid email profile',
+    });
+    return res.status(201).json(maskSsoProvider(config));
+  } catch (e) {
+    console.error('SSO provider create error:', e);
+    return res.status(500).json({ message: e.message || 'Failed to create SSO provider', error: e.message });
+  }
+}
+
+export async function updateSsoProvider(req, res) {
+  try {
+    const { id } = req.params;
+    const config = await SsoConfig.findByPk(id);
+    if (!config) return res.status(404).json({ message: 'SSO provider not found' });
+
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const payload = buildSsoPayload(body);
+    if (payload.provider && payload.provider !== config.provider) {
+      const clash = await SsoConfig.findOne({ where: { provider: payload.provider } });
+      if (clash) return res.status(409).json({ message: 'Provider slug already exists' });
+    }
+    await config.update(payload);
+    await config.reload();
+    return res.json(maskSsoProvider(config));
+  } catch (e) {
+    console.error('SSO provider update error:', e);
+    return res.status(500).json({ message: e.message || 'Failed to update SSO provider', error: e.message });
+  }
+}
+
+export async function deleteSsoProvider(req, res) {
+  try {
+    const { id } = req.params;
+    const config = await SsoConfig.findByPk(id);
+    if (!config) return res.status(404).json({ message: 'SSO provider not found' });
+    await config.destroy();
+    return res.json({ message: 'SSO provider deleted' });
+  } catch (e) {
+    return res.status(500).json({ message: 'Failed to delete SSO provider', error: e.message });
+  }
+}
+
+// SMTP Config – get/upsert/test
+export async function getSmtpConfig(req, res) {
+  try {
+    const config = await SmtpConfig.findOne({ where: { isActive: true } });
+    if (!config) return res.json(null);
+    const json = config.toJSON();
+    if (json.password) json.password = '••••••';
+    return res.json(json);
+  } catch (e) {
+    return res.status(500).json({ message: 'Failed to fetch SMTP config', error: e.message });
+  }
+}
+
+export async function upsertSmtpConfig(req, res) {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const { host, port, secure, user, password, fromEmail, fromName } = body;
+    let config = await SmtpConfig.findOne({ where: { isActive: true } });
+    const payload = {
+      host: host != null ? String(host).trim() : '',
+      port: port != null && port !== '' ? Number(port) : null,
+      secure: secure !== false && secure !== 'false',
+      user: user != null ? String(user).trim() : '',
+      fromEmail: fromEmail != null ? String(fromEmail).trim() : '',
+      fromName: fromName != null ? String(fromName).trim() : '',
+    };
+    if (password !== undefined && password !== '' && password !== '••••••') {
+      payload.password = String(password);
+    }
+    if (!config) {
+      config = await SmtpConfig.create({ ...payload, isActive: true });
+    } else {
+      await config.update(payload);
+    }
+    await config.reload();
+    const json = config.toJSON();
+    if (json.password) json.password = '••••••';
+    return res.json(json);
+  } catch (e) {
+    return res.status(500).json({ message: e.message || 'Failed to save SMTP config', error: e.message });
+  }
+}
+
+export async function testSmtp(req, res) {
+  try {
+    const { testEmail } = req.body && typeof req.body === 'object' ? req.body : {};
+    const to = (testEmail && String(testEmail).trim()) || null;
+    if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      return res.status(400).json({ message: 'Valid test email address is required' });
+    }
+    const config = await SmtpConfig.findOne({ where: { isActive: true } });
+    if (!config || !config.host || !config.user) {
+      return res.status(400).json({ message: 'SMTP config not set or incomplete. Save host and user first.' });
+    }
+    const transporter = nodemailer.createTransport({
+      host: config.host,
+      port: config.port || (config.secure ? 465 : 587),
+      secure: !!config.secure,
+      auth: config.user ? { user: config.user, pass: config.password || '' } : undefined,
+    });
+    const from = config.fromEmail || config.user || 'noreply@localhost';
+    const fromName = config.fromName || 'POS Food';
+    await transporter.sendMail({
+      from: config.fromName ? `"${config.fromName}" <${from}>` : from,
+      to,
+      subject: 'POS Food – SMTP test',
+      text: 'This is a test email from your POS Food SMTP configuration. If you received this, SMTP is working.',
+    });
+    return res.json({ success: true, message: 'Test email sent successfully' });
+  } catch (e) {
+    return res.status(500).json({ message: e.message || 'Failed to send test email', error: e.message });
+  }
+}
+
+// Run full HRMS sync (create + update employees & support staff). Used by cron and manual sync.
+export async function runHrmsSyncEndpoint(req, res) {
+  try {
+    const { runHrmsSync } = await import('../services/hrmsSync.js');
+    const result = await runHrmsSync();
+    if (result.error) {
+      return res.status(500).json({ message: result.error, result });
+    }
+    return res.json(result);
+  } catch (e) {
+    return res.status(500).json({ message: 'HRMS sync failed', error: e.message });
   }
 }
 

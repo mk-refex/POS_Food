@@ -1,0 +1,69 @@
+:root{
+  --ease-smooth: cubic-bezier(.22,.9,.36,1);
+  --duration-fast: 160ms;
+  --duration-medium: 260ms;
+  --duration-slow: 420ms;
+}
+
+/* Page enter */
+.page-fade {
+  animation: pageFadeIn var(--duration-medium) var(--ease-smooth) both;
+}
+@keyframes pageFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Fade-up with stagger support */
+.fade-in-up {
+  animation: fadeInUp var(--duration-medium) var(--ease-smooth) both;
+  animation-delay: calc(var(--stagger-index, 0) * 80ms);
+}
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Subtle lift on cards */
+.card-raise {
+  transition: transform var(--duration-fast) var(--ease-smooth), box-shadow var(--duration-fast) var(--ease-smooth);
+}
+.card-raise:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 8px 28px rgba(15,23,42,0.08);
+}
+
+/* Buttons and interactive controls */
+button, a.button, input, select, textarea {
+  transition: all var(--duration-fast) var(--ease-smooth);
+  will-change: transform, box-shadow, opacity;
+}
+button:hover, a.button:hover { transform: translateY(-2px); }
+button:active, a.button:active { transform: translateY(0); opacity: .95; }
+input:focus, textarea:focus, select:focus {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(59,130,246,0.08);
+  border-color: rgba(59,130,246,0.9);
+}
+
+/* Modal/backdrop */
+.modal-backdrop {
+  animation: backdropFade var(--duration-medium) var(--ease-smooth) both;
+}
+@keyframes backdropFade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.modal-panel {
+  transform-origin: center;
+  animation: popIn var(--duration-medium) var(--ease-smooth) both;
+}
+@keyframes popIn {
+  from { opacity: 0; transform: translateY(8px) scale(.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Small utility */
+.fade-on-load { animation: fadeIn var(--duration-fast) var(--ease-smooth) both; }
+@keyframes fadeIn { from {opacity:0} to {opacity:1} }
+

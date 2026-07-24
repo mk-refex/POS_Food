@@ -14,6 +14,7 @@ Guest.init(
     companyName: { type: DataTypes.STRING(255), allowNull: false },
     createdBy: { type: DataTypes.STRING(255), allowNull: false, defaultValue: 'Admin' },
     createdDate: { type: DataTypes.STRING(10), allowNull: false },
+    expirationDate: { type: DataTypes.DATEONLY, allowNull: true },
     isActive: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
   },
   { sequelize, modelName: 'Guest', tableName: 'guests' },

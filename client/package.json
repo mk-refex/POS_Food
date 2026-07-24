@@ -32,8 +32,10 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-i18next": "^15.6.0",
+    "qrcode.react": "^4.2.0",
     "react-router-dom": "^7.6.3",
     "react-thermal-printer": "^0.22.0",
+    "socket.io-client": "^4.8.1",
     "recharts": "3.2.0",
     "xlsx": "^0.18.5"
   },

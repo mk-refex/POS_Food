@@ -15,6 +15,7 @@ Employee.init(
     companyName: { type: DataTypes.STRING(255), allowNull: true },
     entity: { type: DataTypes.STRING(255), allowNull: true },
     mobileNumber: { type: DataTypes.STRING(20), allowNull: true },
+    email: { type: DataTypes.STRING(255), allowNull: true },
     location: { type: DataTypes.STRING(255), allowNull: true },
     qrCode: { type: DataTypes.TEXT, allowNull: true },
     createdBy: { type: DataTypes.STRING(255), allowNull: false, defaultValue: 'Admin' },

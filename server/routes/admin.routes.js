@@ -9,7 +9,17 @@ import {
   deleteUser,
   // API Config
   getApiConfig,
-  upsertApiConfig
+  upsertApiConfig,
+  // SSO Config
+  listSsoProviders,
+  createSsoProvider,
+  updateSsoProvider,
+  deleteSsoProvider,
+  getSmtpConfig,
+  upsertSmtpConfig,
+  testSmtp,
+  // HRMS Sync
+  runHrmsSyncEndpoint,
 } from '../controllers/admin.controller.js';
 
 const router = Router();
@@ -30,5 +40,19 @@ router.delete('/users/:id', deleteUser);
 // API Config routes
 router.get('/api-config', getApiConfig);
 router.put('/api-config', upsertApiConfig);
+
+// SSO providers for employee login
+router.get('/sso-providers', listSsoProviders);
+router.post('/sso-providers', createSsoProvider);
+router.put('/sso-providers/:id', updateSsoProvider);
+router.delete('/sso-providers/:id', deleteSsoProvider);
+
+// SMTP Config
+router.get('/smtp-config', getSmtpConfig);
+router.put('/smtp-config', upsertSmtpConfig);
+router.post('/smtp-config/test', testSmtp);
+
+// HRMS full sync (create + update employees & support staff; same logic as daily cron)
+router.post('/hrms-sync', runHrmsSyncEndpoint);
 
 export default router;

@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import { Op } from 'sequelize';
-import { Transaction } from '../models/index.js';
+import { Transaction, Employee } from '../models/index.js';
+import { getMonthlySummaryForCustomer, sendTransactionNotificationEmail } from '../services/transactionEmail.js';
+import {
+  getDailyMealTotals,
+  mealLimitErrorMessage,
+  mealLimitWarnings,
+} from '../services/mealLimit.js';
+import { emitTransactionCreated } from '../socket.js';
 
 const createSchema = z.object({
   customerType: z.enum(['employee', 'guest', 'supportStaff']),
@@ -24,39 +31,15 @@ export async function createTransaction(req, res) {
   const parse = createSchema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ errors: parse.error.flatten() });
   const user = req.user;
-  // Server-side meal validation: one breakfast and one lunch per day per person (non-exception items only)
+  // One breakfast and one lunch per day per person (employees, guests, support staff)
   const payload = { ...parse.data };
   const { date, customerType, customerId, items } = payload;
-  const warnings = {};
+  let warnings = {};
 
   try {
-    if (customerType !== 'guest' && customerId) {
-      const prior = await Transaction.findAll({
-        where: { date, customerType, customerId },
-        order: [['id', 'ASC']],
-      });
-
-      const totals = prior.reduce(
-        (acc, t) => {
-          for (const it of t.items || []) {
-            if (it.isException) continue;
-            if (it.name === 'Breakfast') acc.breakfast += Number(it.quantity || 0);
-            if (it.name === 'Lunch') acc.lunch += Number(it.quantity || 0);
-          }
-          return acc;
-        },
-        { breakfast: 0, lunch: 0 }
-      );
-
-      const newBreakfast = (items || [])
-        .filter((i) => i.name === 'Breakfast' && !i.isException)
-        .reduce((s, i) => s + i.quantity, 0);
-      const newLunch = (items || [])
-        .filter((i) => i.name === 'Lunch' && !i.isException)
-        .reduce((s, i) => s + i.quantity, 0);
-
-      if (totals.breakfast + newBreakfast > 1) warnings.breakfastExceeded = true;
-      if (totals.lunch + newLunch > 1) warnings.lunchExceeded = true;
+    if (customerId) {
+      const totals = await getDailyMealTotals(Transaction, { date, customerType, customerId });
+      warnings = mealLimitWarnings(totals, items);
     }
   } catch (e) {
     // proceed without warnings on error
@@ -67,7 +50,58 @@ export async function createTransaction(req, res) {
     return res.status(200).json({ warnings });
   }
 
+  if (warnings.breakfastExceeded || warnings.lunchExceeded) {
+    return res.status(400).json({ message: mealLimitErrorMessage(warnings), warnings });
+  }
+  // Dedup: avoid creating duplicate transactions if same payload was just created seconds ago
+  try {
+    const tenSecondsAgo = new Date(Date.now() - 10 * 1000);
+    const existing = await Transaction.findOne({
+      where: {
+        customerType,
+        customerId: customerId || null,
+        date,
+        createdAt: { [Op.gte]: tenSecondsAgo },
+      },
+      order: [['id', 'DESC']],
+    });
+    if (existing) {
+      // Compare items
+      const existingItems = JSON.stringify(existing.items || []);
+      const newItems = JSON.stringify(payload.items || []);
+      if (existingItems === newItems) {
+        // Return existing transaction to caller without sending duplicate email
+        return res.status(200).json({ ...existing.toJSON(), warnings, duplicate: true });
+      }
+    }
+  } catch (e) {
+    // ignore dedup errors
+  }
+
   const trx = await Transaction.create({ ...payload, userId: user?.userId ?? null });
+  emitTransactionCreated();
+
+  // Send notification email to employee when billed (non-blocking)
+  if (customerType === 'employee' && customerId) {
+    setImmediate(async () => {
+      try {
+        const employee = await Employee.findOne({ where: { employeeId: customerId, isActive: true } });
+        const email = employee?.email?.trim();
+        if (!email) return;
+        const monthlySummary = await getMonthlySummaryForCustomer('employee', customerId, date);
+        const payload = trx.toJSON();
+        await sendTransactionNotificationEmail(
+          payload,
+          email,
+          payload.customerName || employee?.employeeName || 'Employee',
+          monthlySummary,
+        );
+      } catch (e) {
+        console.error('Transaction notification email error:', e?.message || e);
+      }
+    });
+  }
+
   return res.status(201).json({ ...trx.toJSON(), warnings });
 }
 

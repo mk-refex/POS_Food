@@ -218,7 +218,9 @@ export default function Login() {
               error={Boolean(fieldErrors.identifier)}
               required
             >
-              <InputLabel htmlFor="login-identifier">Email or Username</InputLabel>
+              <InputLabel htmlFor="login-identifier">
+                Email or Username
+              </InputLabel>
               <OutlinedInput
                 id="login-identifier"
                 type="text"
@@ -347,6 +349,16 @@ export default function Login() {
           >
             Need help? Contact Refex IT support.
           </Typography>
+          <Box textAlign="center" mt={2}>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => navigate("/employee/login")}
+              sx={{ textTransform: "none" }}
+            >
+              Employee portal — Sign in here
+            </Button>
+          </Box>
         </Box>
       </Box>
     </Box>
