@@ -306,12 +306,18 @@ export async function createMyGuests(req, res) {
       const name = String(item.name || '').trim();
       const companyName = String(item.companyName || '').trim();
       if (!name || !companyName) continue;
+      const exp = item.expirationDate && String(item.expirationDate).trim()
+        ? String(item.expirationDate).trim().slice(0, 10)
+        : null;
+      if (exp && exp < today) {
+        return res.status(400).json({ message: 'Expiration date cannot be in the past' });
+      }
       const guest = await Guest.create({
         name,
         companyName,
         createdBy: employeeId,
         createdDate: today,
-        expirationDate: item.expirationDate && String(item.expirationDate).trim() ? String(item.expirationDate).trim().slice(0, 10) : null,
+        expirationDate: exp,
         isActive: true,
       });
       created.push(guest);

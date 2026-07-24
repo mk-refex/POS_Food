@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { Op } from 'sequelize';
 import { Employee } from '../models/index.js';
+import { sequelize } from '../config/database.js';
 import { signToken } from '../middleware/auth.js';
 import { emitTransactionCreated } from '../socket.js';
 import {
@@ -22,13 +23,22 @@ function normalizeMobile(mobile) {
   return (mobile || '').replace(/\D/g, '').slice(-10);
 }
 
+/** Match emails ignoring leading/trailing spaces and case (fixes HRMS-padded emails). */
+function emailEqualsWhere(email) {
+  const normalized = String(email || '').trim().toLowerCase();
+  return sequelize.where(
+    sequelize.fn('LOWER', sequelize.fn('TRIM', sequelize.col('email'))),
+    normalized,
+  );
+}
+
 // In-memory locks for self-bill to avoid concurrent duplicate processing
 const selfBillLocks = new Set();
 
 export async function requestOtp(req, res) {
   const schema = z.object({
-    employeeId: z.string().min(1).optional(),
-    email: z.string().email().optional(),
+    employeeId: z.string().trim().min(1).optional(),
+    email: z.string().trim().email().optional(),
   }).refine((d) => d.employeeId || d.email, { message: 'Provide email or employee ID' });
 
   const parse = schema.safeParse(req.body);
@@ -40,7 +50,7 @@ export async function requestOtp(req, res) {
   try {
     const where = {};
     if (employeeId) where.employeeId = employeeId.trim();
-    else if (email) where.email = email.trim().toLowerCase();
+    else if (email) where[Op.and] = [emailEqualsWhere(email)];
 
     const employee = await Employee.findOne({ where, attributes: ['id', 'employeeId', 'employeeName', 'mobileNumber', 'email'] });
     if (!employee) {
@@ -87,8 +97,8 @@ export async function requestOtp(req, res) {
 }
 
 const verifyOtpSchema = z.object({
-  employeeId: z.string().min(1).optional(),
-  email: z.string().email().optional(),
+  employeeId: z.string().trim().min(1).optional(),
+  email: z.string().trim().email().optional(),
   otp: z.string().length(6),
 }).refine((d) => d.employeeId || d.email, { message: 'Provide email or employee ID' });
 
@@ -103,7 +113,7 @@ export async function verifyOtp(req, res) {
   if (!key) {
     if (!email) return res.status(400).json({ message: 'Provide email or employee ID' });
     const emp = await Employee.findOne({
-      where: { email: email.trim().toLowerCase() },
+      where: emailEqualsWhere(email),
       attributes: ['employeeId'],
     });
     if (!emp) return res.status(404).json({ message: 'Employee not found.' });
@@ -374,7 +384,9 @@ export async function ssoCallback(req, res) {
     }
 
     const employee = await Employee.findOne({
-      where: { email, isActive: true },
+      where: {
+        [Op.and]: [emailEqualsWhere(email), { isActive: true }],
+      },
       attributes: ['id', 'employeeId', 'employeeName', 'companyName', 'entity', 'email'],
     });
     if (!employee) {
@@ -409,13 +421,14 @@ function getMealByServerTime() {
   return 'lunch';     
 }
 
-/** Resolve employee by employeeId or email (identifier containing @). Email is normalized to lowercase. */
+/** Resolve employee by employeeId or email (identifier containing @). Email is normalized (trim + lowercase). */
 async function findEmployeeByIdOrEmail(Employee, identifier) {
   let id = String(identifier || '').trim();
   if (!id) return null;
   const byEmail = id.includes('@');
-  if (byEmail) id = id.toLowerCase();
-  const where = byEmail ? { email: id, isActive: true } : { employeeId: id, isActive: true };
+  const where = byEmail
+    ? { [Op.and]: [emailEqualsWhere(id), { isActive: true }] }
+    : { employeeId: id, isActive: true };
   return Employee.findOne({
     where,
     attributes: ['employeeId', 'employeeName', 'companyName', 'entity', 'email', 'mobileNumber'],

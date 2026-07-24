@@ -15,23 +15,25 @@ interface GuestRow {
   status: "active" | "expired";
 }
 
+function getTodayLocalDate() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 export default function GuestsPage() {
   const [list, setList] = useState<GuestRow[]>([]);
   const [companies, setCompanies] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
-  const [bulkOpen, setBulkOpen] = useState(false);
   const [qrGuest, setQrGuest] = useState<GuestRow | null>(null);
   const [downloadGuest, setDownloadGuest] = useState<GuestRow | null>(null);
   const qrContainerRef = useRef<HTMLDivElement>(null);
   const downloadContainerRef = useRef<HTMLDivElement>(null);
 
-  const [formName, setFormName] = useState("");
-  const [formCompany, setFormCompany] = useState("");
-  const [formExpiry, setFormExpiry] = useState("");
-  const [formNoExpiry, setFormNoExpiry] = useState(false);
-
-  const [bulkRows, setBulkRows] = useState<Array<{ name: string; companyName: string; expirationDate: string; noExpiry: boolean }>>([
+  const [guestRows, setGuestRows] = useState<Array<{ name: string; companyName: string; expirationDate: string; noExpiry: boolean }>>([
     { name: "", companyName: "", expirationDate: "", noExpiry: false },
   ]);
   const [submitting, setSubmitting] = useState(false);
@@ -39,6 +41,7 @@ export default function GuestsPage() {
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
+  const todayLocal = getTodayLocalDate();
 
   const load = async () => {
     setLoading(true);
@@ -93,60 +96,34 @@ export default function GuestsPage() {
   };
 
   const openAdd = () => {
-    setFormName("");
-    setFormCompany(defaultCompany());
-    setFormExpiry("");
-    setFormNoExpiry(false);
+    setGuestRows([{ name: "", companyName: defaultCompany(), expirationDate: "", noExpiry: false }]);
     setAddOpen(true);
   };
 
-  const openBulk = () => {
-    setBulkRows([{ name: "", companyName: defaultCompany(), expirationDate: "", noExpiry: false }]);
-    setBulkOpen(true);
+  const addGuestRow = () => {
+    setGuestRows((r) => [...r, { name: "", companyName: defaultCompany(), expirationDate: "", noExpiry: false }]);
   };
 
-  const addRow = () => {
-    setBulkRows((r) => [...r, { name: "", companyName: defaultCompany(), expirationDate: "", noExpiry: false }]);
+  const removeGuestRow = (index: number) => {
+    if (guestRows.length <= 1) return;
+    setGuestRows((r) => r.filter((_, i) => i !== index));
   };
 
-  const removeBulkRow = (index: number) => {
-    if (bulkRows.length <= 1) return;
-    setBulkRows((r) => r.filter((_, i) => i !== index));
+  const updateGuestRow = (index: number, field: string, value: string | boolean) => {
+    setGuestRows((r) =>
+      r.map((row, i) => {
+        if (i !== index) return row;
+        if (field === "noExpiry" && value === true) {
+          return { ...row, noExpiry: true, expirationDate: "" };
+        }
+        return { ...row, [field]: value };
+      }),
+    );
   };
 
-  const updateBulkRow = (index: number, field: string, value: string | boolean) => {
-    setBulkRows((r) => r.map((row, i) => (i === index ? { ...row, [field]: value } : row)));
-  };
-
-  const submitSingle = async () => {
-    const name = formName.trim();
-    const company = formCompany.trim();
-    if (!name || !company) {
-      setError("Name and company are required");
-      return;
-    }
-    setSubmitting(true);
-    setError(null);
-    try {
-      await apiFetchEmployee("/employee/guests", {
-        method: "POST",
-        body: JSON.stringify({
-          name,
-          companyName: company,
-          expirationDate: formNoExpiry ? null : (formExpiry || null),
-        }),
-      });
-      setAddOpen(false);
-      load();
-    } catch (e: any) {
-      setError(e?.message || "Failed to create guest");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const submitBulk = async () => {
-    const guests = bulkRows
+  const submitGuests = async () => {
+    const today = getTodayLocalDate();
+    const guests = guestRows
       .map((r) => ({
         name: r.name.trim(),
         companyName: r.companyName.trim(),
@@ -157,17 +134,36 @@ export default function GuestsPage() {
       setError("Add at least one guest with name and company");
       return;
     }
+    const missingExpiry = guestRows.some(
+      (r) => r.name.trim() && r.companyName.trim() && !r.noExpiry && !r.expirationDate,
+    );
+    if (missingExpiry) {
+      setError("Select an expiration date or check No expiry");
+      return;
+    }
+    const pastExpiry = guests.some((g) => g.expirationDate && g.expirationDate < today);
+    if (pastExpiry) {
+      setError("Expiration date cannot be in the past");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
-      await apiFetchEmployee("/employee/guests", {
-        method: "POST",
-        body: JSON.stringify({ guests }),
-      });
-      setBulkOpen(false);
+      if (guests.length === 1) {
+        await apiFetchEmployee("/employee/guests", {
+          method: "POST",
+          body: JSON.stringify(guests[0]),
+        });
+      } else {
+        await apiFetchEmployee("/employee/guests", {
+          method: "POST",
+          body: JSON.stringify({ guests }),
+        });
+      }
+      setAddOpen(false);
       load();
     } catch (e: any) {
-      setError(e?.message || "Failed to create guests");
+      setError(e?.message || "Failed to create guest(s)");
     } finally {
       setSubmitting(false);
     }
@@ -230,22 +226,13 @@ export default function GuestsPage() {
       <div className="p-4 lg:p-6 max-w-5xl mx-auto">
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
           <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">Guests</h1>
-          <div className="flex gap-2">
-            <button
+          <button
               type="button"
               onClick={openAdd}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
             >
               <i className="ri-user-add-line mr-1" /> Add Guest
             </button>
-            <button
-              type="button"
-              onClick={openBulk}
-              className="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-            >
-              <i className="ri-group-line mr-1" /> Bulk Create
-            </button>
-          </div>
         </div>
 
         {error && (
@@ -340,115 +327,137 @@ export default function GuestsPage() {
         )}
       </div>
 
-      {/* Add single guest modal */}
+      {/* Add guest modal */}
       {addOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full p-6 border border-gray-200 dark:border-gray-700">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/50 overflow-y-auto">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-5xl p-4 sm:p-6 my-4 sm:my-8 border border-gray-200 dark:border-gray-700">
             <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-gray-100">Add Guest</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Name *</label>
-                <input
-                  type="text"
-                  value={formName}
-                  onChange={(e) => setFormName(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Guest name"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Company *</label>
-                <select
-                  value={formCompany}
-                  onChange={(e) => setFormCompany(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  {companyOptions.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={formNoExpiry} onChange={(e) => setFormNoExpiry(e.target.checked)} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
-                  <span className="text-sm text-gray-700 dark:text-gray-300">No expiry</span>
-                </label>
-              </div>
-              {!formNoExpiry && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Expiration date</label>
-                  <input
-                    type="date"
-                    value={formExpiry}
-                    onChange={(e) => setFormExpiry(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-              )}
-            </div>
-            <div className="mt-6 flex justify-end gap-2">
-              <button type="button" onClick={() => setAddOpen(false)} className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
-                Cancel
-              </button>
-              <button type="button" onClick={submitSingle} disabled={submitting} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
-                {submitting ? "Creating…" : "Create"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
-      {/* Bulk create modal */}
-      {bulkOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 overflow-auto">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full p-6 my-8 border border-gray-200 dark:border-gray-700">
-            <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-gray-100">Bulk Create Guests</h2>
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {bulkRows.map((row, idx) => (
-                <div key={idx} className="flex flex-wrap items-center gap-2 p-3 border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50/50 dark:bg-gray-700/30">
-                  <input
-                    type="text"
-                    value={row.name}
-                    onChange={(e) => updateBulkRow(idx, "name", e.target.value)}
-                    placeholder="Name"
-                    className="flex-1 min-w-[100px] px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                  <select
-                    value={row.companyName}
-                    onChange={(e) => updateBulkRow(idx, "companyName", e.target.value)}
-                    className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    {companyOptions.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                  <label className="flex items-center gap-1 text-sm text-gray-700 dark:text-gray-300">
-                    <input type="checkbox" checked={row.noExpiry} onChange={(e) => updateBulkRow(idx, "noExpiry", e.target.checked)} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
-                    No expiry
-                  </label>
-                  {!row.noExpiry && (
-                    <input
-                      type="date"
-                      value={row.expirationDate}
-                      onChange={(e) => updateBulkRow(idx, "expirationDate", e.target.value)}
-                      className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  )}
-                  <button type="button" onClick={() => removeBulkRow(idx)} className="p-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg" title="Remove row">
-                    <i className="ri-close-line text-lg" />
-                  </button>
+            <div className="hidden md:grid md:grid-cols-[minmax(0,1.1fr)_minmax(0,2fr)_minmax(14rem,1.5fr)_2.5rem] gap-3 px-3 pb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              <span>Name</span>
+              <span>Company</span>
+              <span>Expiration</span>
+              <span className="sr-only">Remove</span>
+            </div>
+
+            <div className="space-y-3 max-h-[min(24rem,60vh)] overflow-y-auto">
+              {guestRows.map((row, idx) => (
+                <div
+                  key={idx}
+                  className="p-3 border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50/50 dark:bg-gray-700/30"
+                >
+                  <div className="md:hidden flex items-center justify-between mb-2">
+                    <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Guest {idx + 1}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeGuestRow(idx)}
+                      disabled={guestRows.length <= 1}
+                      className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg disabled:opacity-30"
+                      title="Remove guest"
+                    >
+                      <i className="ri-close-line text-lg" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1.1fr)_minmax(0,2fr)_minmax(14rem,1.5fr)_2.5rem] gap-3 md:items-center">
+                    <div className="min-w-0">
+                      <label className="md:sr-only block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Name</label>
+                      <input
+                        type="text"
+                        value={row.name}
+                        onChange={(e) => updateGuestRow(idx, "name", e.target.value)}
+                        placeholder="Name"
+                        className="w-full min-w-0 h-[38px] px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+
+                    <div className="min-w-0">
+                      <label className="md:sr-only block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Company</label>
+                      <select
+                        value={row.companyName}
+                        onChange={(e) => updateGuestRow(idx, "companyName", e.target.value)}
+                        className="w-full min-w-0 h-[38px] px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        {companyOptions.map((c) => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="min-w-0">
+                      <label className="md:sr-only block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Expiration</label>
+                      <div className="flex flex-col sm:flex-row md:flex-row items-stretch sm:items-center gap-2 min-h-[38px]">
+                        <label className="inline-flex items-center gap-2 h-[38px] shrink-0 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={row.noExpiry}
+                            onChange={(e) => updateGuestRow(idx, "noExpiry", e.target.checked)}
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap">No expiry</span>
+                        </label>
+                        {!row.noExpiry && (
+                          <input
+                            type="date"
+                            value={row.expirationDate}
+                            min={todayLocal}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              if (value && value < todayLocal) return;
+                              updateGuestRow(idx, "expirationDate", value);
+                            }}
+                            className="w-full min-w-0 h-[38px] flex-1 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          />
+                        )}
+                      </div>
+                      {!row.noExpiry && (
+                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400 md:hidden">
+                          Valid through selected date (expires the next day)
+                        </p>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => removeGuestRow(idx)}
+                      disabled={guestRows.length <= 1}
+                      className="hidden md:flex h-[38px] w-[38px] items-center justify-center text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg disabled:opacity-30 justify-self-center"
+                      title="Remove guest"
+                    >
+                      <i className="ri-close-line text-lg" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
-            <button type="button" onClick={addRow} className="mt-3 text-sm text-blue-600 dark:text-blue-400 hover:underline font-medium">
-              + Add row
+
+            <p className="hidden md:block mt-2 px-1 text-xs text-gray-500 dark:text-gray-400">
+              Expiration is the last valid day. Selecting today allows access only today; the guest expires tomorrow.
+            </p>
+
+            <button
+              type="button"
+              onClick={addGuestRow}
+              className="mt-3 text-sm text-blue-600 dark:text-blue-400 hover:underline font-medium"
+            >
+              <i className="ri-user-add-line mr-1" /> Add Guest
             </button>
-            <div className="mt-6 flex justify-end gap-2">
-              <button type="button" onClick={() => setBulkOpen(false)} className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+
+            <div className="mt-6 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setAddOpen(false)}
+                className="w-full sm:w-auto px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              >
                 Cancel
               </button>
-              <button type="button" onClick={submitBulk} disabled={submitting} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
-                {submitting ? "Creating…" : "Create all"}
+              <button
+                type="button"
+                onClick={submitGuests}
+                disabled={submitting}
+                className="w-full sm:w-auto px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              >
+                {submitting ? "Creating…" : guestRows.length > 1 ? "Create all" : "Create"}
               </button>
             </div>
           </div>

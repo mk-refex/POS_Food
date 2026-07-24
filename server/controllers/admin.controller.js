@@ -35,10 +35,10 @@ export async function getUserById(req, res) {
 }
 
 const createUserSchema = z.object({
-  username: z.string().min(3).regex(/^[a-zA-Z0-9_.-]+$/).optional(),
-  email: z.string().email(),
+  username: z.string().trim().min(3).regex(/^[a-zA-Z0-9_.-]+$/).optional(),
+  email: z.string().trim().email(),
   password: z.string().min(6),
-  name: z.string().min(1),
+  name: z.string().trim().min(1),
   role: z.enum(['admin', 'user']).optional(),
 });
 
@@ -53,32 +53,35 @@ export async function createUser(req, res) {
     }
     
     const { username, email, password, name, role = 'user' } = parse.data;
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedUsername = username ? username.trim() : null;
+    const normalizedName = name.trim();
     
     // Check if user already exists by email or username
     const existingUser = await User.findOne({ 
       where: { 
         [Op.or]: [
-          { email },
-          ...(username ? [{ username }] : [])
+          { email: normalizedEmail },
+          ...(normalizedUsername ? [{ username: normalizedUsername }] : [])
         ]
       } 
     });
     
     if (existingUser) {
-      if (existingUser.email === email) {
+      if (existingUser.email === normalizedEmail) {
         return res.status(409).json({ message: 'Email already in use' });
       }
-      if (username && existingUser.username === username) {
+      if (normalizedUsername && existingUser.username === normalizedUsername) {
         return res.status(409).json({ message: 'Username already in use' });
       }
     }
     
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await User.create({ 
-      username: username || null,
-      email, 
+      username: normalizedUsername,
+      email: normalizedEmail, 
       passwordHash, 
-      name, 
+      name: normalizedName, 
       role 
     });
     
@@ -91,9 +94,9 @@ export async function createUser(req, res) {
 }
 
 const updateUserSchema = z.object({
-  username: z.string().min(3).regex(/^[a-zA-Z0-9_.-]+$/).optional(),
-  email: z.string().email().optional(),
-  name: z.string().min(1).optional(),
+  username: z.string().trim().min(3).regex(/^[a-zA-Z0-9_.-]+$/).optional(),
+  email: z.string().trim().email().optional(),
+  name: z.string().trim().min(1).optional(),
   role: z.enum(['admin', 'user']).optional(),
   password: z.string().min(6).optional(),
 });
@@ -121,6 +124,16 @@ export async function updateUser(req, res) {
     if (updateData.password) {
       updateData.passwordHash = await bcrypt.hash(updateData.password, 10);
       delete updateData.password;
+    }
+
+    if (updateData.email != null) {
+      updateData.email = updateData.email.trim().toLowerCase();
+    }
+    if (updateData.username != null) {
+      updateData.username = updateData.username.trim();
+    }
+    if (updateData.name != null) {
+      updateData.name = updateData.name.trim();
     }
     
     // Check email and username uniqueness if being updated

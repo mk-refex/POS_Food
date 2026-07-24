@@ -522,7 +522,7 @@ export default function EmployeeDashboardPage() {
                   </div>
                   <div className="bg-blue-50 rounded-xl border border-blue-100 p-3 sm:p-4 flex items-center justify-between min-w-0">
                     <div className="min-w-0">
-                      <p className="text-xs font-medium text-blue-700 mb-0.5">Trans</p>
+                      <p className="text-xs font-medium text-blue-700 mb-0.5">Transactions</p>
                       <p className="text-xl sm:text-2xl font-bold text-blue-600 truncate"><AnimatedNumber value={chartData?.summary?.totalTransactions ?? 0} /></p>
                     </div>
                     <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center shrink-0">

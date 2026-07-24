@@ -8,6 +8,15 @@ import { emitMasterUpdated } from '../socket.js';
 
 const SUPPORT_STAFF_DESIGNATIONS = ['Driver', 'Office Assistant'];
 
+/** Trim leading/trailing whitespace from string values (esp. emails from HRMS). */
+function trimStr(value) {
+  return String(value ?? '').trim();
+}
+
+function normalizeEmail(value) {
+  return trimStr(value).toLowerCase();
+}
+
 async function fetchHrmsEmployeesFromApi() {
   const cfg = await ApiConfig.findOne({ where: { isActive: true } });
   if (!cfg || !cfg.baseUrl) {
@@ -79,14 +88,14 @@ export async function runHrmsSync() {
         );
 
         if (isSupport) {
-          const staffId = emp.employee_id || '';
+          const staffId = trimStr(emp.employee_id);
           if (!staffId) continue;
           const payload = {
-            name: emp.employee_name || '',
-            email: emp.email || '',
-            mobileNumber: emp.mobile_number || '',
-            designation: emp.designation || '',
-            companyName: emp.company?.company_name || '',
+            name: trimStr(emp.employee_name),
+            email: normalizeEmail(emp.email),
+            mobileNumber: trimStr(emp.mobile_number),
+            designation: trimStr(emp.designation),
+            companyName: trimStr(emp.company?.company_name),
             biometricData: emp.qr_code_image || '',
             isActive: emp.is_active === 1 || emp.is_active === true,
           };
@@ -110,15 +119,15 @@ export async function runHrmsSync() {
             result.created.supportStaff++;
           }
         } else {
-          const employeeId = emp.employee_id || '';
+          const employeeId = trimStr(emp.employee_id);
           if (!employeeId) continue;
           const payload = {
-            employeeName: emp.employee_name || '',
-            email: emp.email || '',
-            companyName: emp.company?.company_name || '',
-            entity: emp.designation || '',
-            mobileNumber: emp.mobile_number || '',
-            location: emp.branch?.branch_name || '',
+            employeeName: trimStr(emp.employee_name),
+            email: normalizeEmail(emp.email),
+            companyName: trimStr(emp.company?.company_name),
+            entity: trimStr(emp.designation),
+            mobileNumber: trimStr(emp.mobile_number),
+            location: trimStr(emp.branch?.branch_name),
             qrCode: emp.qr_code_image || '',
             isActive: emp.is_active === 1 || emp.is_active === true,
           };
